@@ -1,0 +1,171 @@
+# =============================================================================
+# GITHUB KNOWLEDGE ASSISTANT - .gitignore
+# =============================================================================
+# This file tells Git which files and folders to NEVER track.
+# Files listed here will never be committed, even if they exist locally.
+# This protects our secrets and keeps the repository clean.
+# =============================================================================
+
+
+# =============================================================================
+# SECTION 1: DEPENDENCIES
+# =============================================================================
+# node_modules contains all installed npm packages.
+# These can be HUNDREDS of thousands of files and are NEVER committed.
+# Anyone cloning the repo runs `npm install` to regenerate them.
+# =============================================================================
+
+node_modules/
+.pnp
+.pnp.js
+
+
+# =============================================================================
+# SECTION 2: ENVIRONMENT VARIABLES (CRITICAL SECURITY)
+# =============================================================================
+# .env files contain secret API keys, database passwords, and tokens.
+# If these were committed to GitHub, anyone in the world could steal them.
+# We NEVER commit .env files. EVER.
+# =============================================================================
+
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+.env.*.local
+
+# We WILL commit .env.example files (with fake placeholder values)
+# so other developers know which variables they need to set up.
+!.env.example
+
+
+# =============================================================================
+# SECTION 3: BUILD OUTPUT
+# =============================================================================
+# These are auto-generated files created when we "build" the app for production.
+# They are regenerated each time, so we don't commit them.
+# =============================================================================
+
+# Next.js build output
+.next/
+out/
+
+# General build folders
+dist/
+build/
+
+
+# =============================================================================
+# SECTION 4: NEXT.JS SPECIFIC
+# =============================================================================
+
+# Next.js cache (auto-generated performance cache)
+.next/cache/
+
+
+# =============================================================================
+# SECTION 5: TESTING
+# =============================================================================
+
+coverage/
+.nyc_output/
+
+
+# =============================================================================
+# SECTION 6: LOGS
+# =============================================================================
+# Log files are generated during runtime. We don't commit these.
+# =============================================================================
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+
+# =============================================================================
+# SECTION 7: OPERATING SYSTEM FILES
+# =============================================================================
+# These are files your OS creates automatically. They have nothing to do
+# with our code and should never be in the repository.
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+
+# =============================================================================
+# SECTION 8: EDITOR & IDE FILES
+# =============================================================================
+# Personal editor settings are not part of the project.
+# =============================================================================
+
+# VSCode (some settings are ok to share, but not all)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# JetBrains (WebStorm, IntelliJ)
+.idea/
+*.iml
+*.iws
+
+# Vim
+*.swp
+*.swo
+
+
+# =============================================================================
+# SECTION 9: TYPESCRIPT
+# =============================================================================
+
+*.tsbuildinfo
+next-env.d.ts
+
+
+# =============================================================================
+# SECTION 10: DOCKER
+# =============================================================================
+# We don't ignore docker-compose.yml (we want to commit that)
+# but we ignore any local override files.
+# =============================================================================
+
+docker-compose.override.yml
+
+
+# =============================================================================
+# SECTION 11: PRISMA
+# =============================================================================
+# Prisma generates a local binary for database access. Don't commit it.
+# =============================================================================
+
+backend/prisma/.env
+
+
+# =============================================================================
+# SECTION 12: MISC
+# =============================================================================
+
+.cache/
+.parcel-cache/
+*.pem
+.vercel
