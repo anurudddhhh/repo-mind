@@ -694,7 +694,7 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 <div align="center">
 
-**Built with ❤️ by [Your Name]**
+**Built by anurudddhhh**
 
 If you find this project useful, please consider giving it a ⭐
 
