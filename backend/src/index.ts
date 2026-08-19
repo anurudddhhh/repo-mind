@@ -215,6 +215,31 @@ app.get('/health', (_req: Request, res: Response) => {
 
 
 
+// Protected route — must have valid JWT
+app.get('/auth-test-protected', requireAuth, (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    message: 'You are authenticated!',
+    user: {
+      id: req.user!.id,
+      username: req.user!.username,
+      email: req.user!.email,
+    },
+    tokenPayload: req.token,
+  });
+});
+
+// Optional auth route — works with or without JWT
+app.get('/auth-test-optional', optionalAuth, (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    isAuthenticated: !!req.user,
+    message: req.user
+      ? `Hello, ${req.user.username}!`
+      : 'Hello, anonymous visitor!',
+  });
+});
+
 
 // ============================================================
 // API ROUTES — PLACEHOLDER SECTION

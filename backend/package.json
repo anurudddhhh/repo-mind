@@ -4,7 +4,7 @@
   "description": "Backend API server for Repo-Mind GitHub Knowledge Assistant",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon --watch src --ext ts --exec \"ts-node -r tsconfig-paths/register src/index.ts\"",
+    "dev": "nodemon --watch src --ext ts --exec \"ts-node -r ./env-loader.js -r tsconfig-paths/register src/index.ts\"",
     "build": "tsc",
     "start": "node -r tsconfig-paths/register dist/index.js",
     "type-check": "tsc --noEmit",
