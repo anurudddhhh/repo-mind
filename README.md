@@ -1,5 +1,4 @@
 
-```markdown
 <div align="center">
 
 # 🧠 Repo-Mind
@@ -20,7 +19,6 @@
 
 </div>
 
----
 
 ## 📋 Table of Contents
 
@@ -701,4 +699,3 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 If you find this project useful, please consider giving it a ⭐
 
 </div>
-```
