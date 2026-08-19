@@ -1,0 +1,399 @@
+// ============================================================
+// PRISMA SCHEMA FOR REPO-MIND
+// ============================================================
+// This file is the single source of truth for our database structure.
+// After editing this file, we run:
+//   npx prisma generate   → regenerate the TypeScript client
+//   npx prisma db push    → sync schema to PostgreSQL (dev only)
+//   npx prisma migrate dev → create versioned migration (recommended)
+// ============================================================
+
+// -----------------------------------------------------------
+// GENERATOR: Tells Prisma what to generate from this schema
+// The "client" generator produces a fully type-safe TS client
+// that we import as `import { PrismaClient } from '@prisma/client'`
+// -----------------------------------------------------------
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -----------------------------------------------------------
+// DATASOURCE: Where our database lives
+// - provider: "postgresql" — we use PostgreSQL (via Neon)
+// - url: reads DATABASE_URL from our .env file
+// -----------------------------------------------------------
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// MODEL: User
+// Stores users authenticated via GitHub OAuth.
+// One User can have many Repositories, ChatSessions, etc.
+// ============================================================
+model User {
+  // Primary key — cuid() generates a collision-resistant unique string
+  // Example: "clx8kv7100000mp08g5f7h2r3"
+  id String @id @default(cuid())
+
+  // GitHub's numeric user ID — used to identify returning users
+  // BigInt because GitHub IDs can exceed 32-bit integer range
+  githubId BigInt @unique
+
+  // GitHub username (e.g., "torvalds") — can change, so we sync on login
+  username String
+
+  // User's public email from GitHub — may be null if user hid it
+  email String? @unique
+
+  // Display name (e.g., "Linus Torvalds")
+  name String?
+
+  // Profile picture URL from GitHub
+  avatarUrl String?
+
+  // GitHub OAuth access token — used to call GitHub API on user's behalf
+  // ENCRYPTED at rest in production (we'll add encryption in Phase 3)
+  // Stored as Text because tokens can be long (especially fine-grained PATs)
+  accessToken String @db.Text
+
+  // Timestamps for audit and sorting
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Last time the user logged in — useful for analytics and cleanup
+  lastLoginAt DateTime?
+
+  // -----------------------------
+  // RELATIONS: What this user owns
+  // -----------------------------
+  repositories  Repository[]
+  chatSessions  ChatSession[]
+
+  // Database indexes for fast lookup by githubId (during login)
+  @@index([githubId])
+  @@map("users") // Actual table name in PostgreSQL will be "users"
+}
+
+// ============================================================
+// MODEL: Repository
+// A GitHub repository that a user has added to Repo-Mind for indexing.
+// One Repository has many CodeChunks, IndexingJobs, and ChatSessions.
+// ============================================================
+model Repository {
+  id String @id @default(cuid())
+
+  // GitHub's numeric repository ID — stable identifier even if repo is renamed
+  githubRepoId BigInt @unique
+
+  // Owner + repo name (e.g., "facebook/react")
+  fullName String
+
+  // Just the repo name (e.g., "react")
+  name String
+
+  // Owner username or org name (e.g., "facebook")
+  owner String
+
+  // Repository description from GitHub
+  description String? @db.Text
+
+  // Primary language reported by GitHub (e.g., "TypeScript")
+  language String?
+
+  // Default branch (e.g., "main" or "master")
+  defaultBranch String @default("main")
+
+  // Whether the repo is private on GitHub
+  isPrivate Boolean @default(false)
+
+  // Full clone URL (e.g., "https://github.com/facebook/react.git")
+  cloneUrl String
+
+  // Star count and other stats (updated periodically)
+  stars Int @default(0)
+  forks Int @default(0)
+
+  // Indexing state — tells us if the repo is ready to be queried
+  indexingStatus IndexingStatus @default(PENDING)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // When was indexing last completed successfully?
+  lastIndexedAt DateTime?
+
+  // -----------------------------
+  // RELATION: Owner (User)
+  // onDelete: Cascade → if user is deleted, their repos are auto-deleted
+  // -----------------------------
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // -----------------------------
+  // BACK-RELATIONS: What this repo owns
+  // -----------------------------
+  codeChunks       CodeChunk[]
+  indexingJobs     IndexingJob[]
+  chatSessions     ChatSession[]
+  analysisResults  AnalysisResult[]
+
+  // Indexes for performance
+  @@index([userId])              // Fast lookup of "all repos for a user"
+  @@index([githubRepoId])        // Fast lookup during GitHub API sync
+  @@unique([userId, fullName])   // Same user can't add the same repo twice
+  @@map("repositories")
+}
+
+// ============================================================
+// ENUM: IndexingStatus
+// Tracks the lifecycle of a repository's indexing process
+// ============================================================
+enum IndexingStatus {
+  PENDING     // Repo added but indexing not started
+  QUEUED      // In queue, waiting for a worker
+  PROCESSING  // Currently being parsed and embedded
+  COMPLETED   // Successfully indexed, ready to query
+  FAILED      // Something went wrong (see IndexingJob.errorMessage)
+}
+
+// ============================================================
+// MODEL: IndexingJob
+// A record of every indexing attempt for a repository.
+// Useful for debugging, retries, and progress tracking (SSE).
+// A repo can have multiple jobs over time (re-indexing after updates).
+// ============================================================
+model IndexingJob {
+  id String @id @default(cuid())
+
+  // Current status of this specific job
+  status IndexingStatus @default(QUEUED)
+
+  // Progress tracking (0-100)
+  progress Int @default(0)
+
+  // What phase are we in? (e.g., "fetching_files", "parsing_ast", "generating_embeddings")
+  currentPhase String?
+
+  // How many files have been processed vs. total
+  filesProcessed Int @default(0)
+  totalFiles     Int @default(0)
+
+  // How many chunks have been created and embedded
+  chunksCreated Int @default(0)
+
+  // If the job failed, why? (Stored for debugging)
+  errorMessage String? @db.Text
+
+  // Job timing
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  // Relation to the repository being indexed
+  repositoryId String
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@index([repositoryId])
+  @@index([status])
+  @@map("indexing_jobs")
+}
+
+// ============================================================
+// MODEL: CodeChunk
+// Metadata for each semantic code chunk (function, class, method).
+// The ACTUAL VECTOR EMBEDDING is stored in Pinecone.
+// This table stores everything else: file path, line numbers, content, etc.
+//
+// Why split? Vectors are 384 numbers each — expensive to store in Postgres.
+// Pinecone is optimized for vector similarity search at massive scale.
+// PostgreSQL is optimized for structured queries and relationships.
+// ============================================================
+model CodeChunk {
+  id String @id @default(cuid())
+
+  // The unique ID we assigned to the corresponding vector in Pinecone
+  // This is the "link" between our SQL row and its vector
+  pineconeId String @unique
+
+  // What kind of code is this chunk? (function, class, method, etc.)
+  chunkType ChunkType
+
+  // Human-readable name (e.g., "renderComponent", "MyClass.handleClick")
+  name String
+
+  // The actual source code content of this chunk
+  content String @db.Text
+
+  // File path relative to the repo root (e.g., "src/components/Button.tsx")
+  filePath String
+
+  // Line numbers in the original file (1-indexed)
+  startLine Int
+  endLine   Int
+
+  // Programming language detected (e.g., "typescript", "python")
+  language String
+
+  // Cross-file dependencies extracted from AST
+  // Example: ["React", "useState", "Button"] — what this chunk imports/uses
+  // Stored as JSON so we can query and traverse it later
+  dependencies Json @default("[]")
+
+  // AI-generated summary of what this chunk does (optional, filled later)
+  summary String? @db.Text
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relation to the repository this chunk belongs to
+  repositoryId String
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  // Indexes for common queries
+  @@index([repositoryId])
+  @@index([repositoryId, filePath]) // Fast lookup of "all chunks in a file"
+  @@index([pineconeId])              // Fast lookup when Pinecone returns results
+  @@map("code_chunks")
+}
+
+// ============================================================
+// ENUM: ChunkType
+// What kind of code element a chunk represents.
+// Determined by AST parsing (Tree-sitter).
+// ============================================================
+enum ChunkType {
+  FUNCTION      // Standalone function
+  CLASS         // Class definition
+  METHOD        // Method inside a class
+  INTERFACE     // TypeScript interface
+  TYPE          // TypeScript type alias
+  COMPONENT     // React/Vue component
+  MODULE        // A whole file/module (fallback)
+  IMPORT_BLOCK  // Group of imports at top of file
+  OTHER         // Anything else
+}
+
+// ============================================================
+// MODEL: ChatSession
+// A conversation between a user and a specific repository.
+// Users can have multiple chat sessions per repo.
+// ============================================================
+model ChatSession {
+  id String @id @default(cuid())
+
+  // User-friendly title (e.g., "Understanding auth flow")
+  // Can be auto-generated from the first message
+  title String @default("New Chat")
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  repositoryId String
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  // Back-relation
+  messages ChatMessage[]
+
+  @@index([userId])
+  @@index([repositoryId])
+  @@index([userId, repositoryId]) // Fast lookup of "user's chats for this repo"
+  @@map("chat_sessions")
+}
+
+// ============================================================
+// MODEL: ChatMessage
+// A single message within a chat session.
+// Messages are either from the "user" or the "assistant" (AI).
+// ============================================================
+model ChatMessage {
+  id String @id @default(cuid())
+
+  // Who sent this message?
+  role MessageRole
+
+  // The actual message text (can be very long — AI responses often are)
+  content String @db.Text
+
+  // For AI messages: which code chunks were used as context (RAG)
+  // Stored as JSON array of CodeChunk IDs so we can show sources in UI
+  contextChunkIds Json @default("[]")
+
+  // Optional: track token usage for cost monitoring
+  tokensUsed Int?
+
+  createdAt DateTime @default(now())
+
+  // Relation to session
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([sessionId, createdAt]) // Fast ordered lookup of messages in a session
+  @@map("chat_messages")
+}
+
+// ============================================================
+// ENUM: MessageRole
+// Who sent the message. Aligns with OpenAI/Groq chat API roles.
+// ============================================================
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM // For system prompts / instructions
+}
+
+// ============================================================
+// MODEL: AnalysisResult
+// Cached AI analysis results for a repository.
+// Includes architecture summaries, bug reports, and documentation.
+// We cache these because generating them is expensive (many AI calls).
+// ============================================================
+model AnalysisResult {
+  id String @id @default(cuid())
+
+  // What kind of analysis is this?
+  analysisType AnalysisType
+
+  // The full result — structure varies by analysisType
+  // Example for ARCHITECTURE: { modules: [...], mermaidDiagram: "..." }
+  // Example for BUGS: { bugs: [{ file, line, severity, description }] }
+  result Json
+
+  // A short human-readable summary (for showing in UI lists)
+  summary String? @db.Text
+
+  // Version — increments each time we regenerate for the same repo+type
+  version Int @default(1)
+
+  // When was this analysis generated?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relation to repository
+  repositoryId String
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  // A repo can have multiple analysis types, but only ONE most recent per type
+  @@unique([repositoryId, analysisType])
+  @@index([repositoryId])
+  @@map("analysis_results")
+}
+
+// ============================================================
+// ENUM: AnalysisType
+// Different kinds of AI-powered analyses we support.
+// ============================================================
+enum AnalysisType {
+  ARCHITECTURE   // High-level system overview + Mermaid diagram
+  BUGS           // Bug detection and vulnerability analysis
+  DOCUMENTATION  // Auto-generated docs and READMEs
+  COMMIT_HISTORY // Summary of recent commit activity
+}
