@@ -4,15 +4,22 @@
   "description": "Backend API server for Repo-Mind GitHub Knowledge Assistant",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --ext ts --exec \"ts-node -r tsconfig-paths/register src/index.ts\"",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "node -r tsconfig-paths/register dist/index.js",
+    "type-check": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:push": "prisma db push"
   },
-  "keywords": ["github", "ai", "rag", "code-analysis", "ast"],
+  "keywords": [
+    "github",
+    "ai",
+    "rag",
+    "code-analysis",
+    "ast"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
@@ -60,7 +67,8 @@
     "nodemon": "^3.1.14",
     "prisma": "^7.9.1",
     "ts-node": "^10.9.2",
-    "typescript": "^7.0.2"
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.4.5"
   },
   "engines": {
     "node": ">=18.0.0"
