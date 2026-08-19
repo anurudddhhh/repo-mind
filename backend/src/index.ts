@@ -11,19 +11,13 @@
 // ../../   = D:\repo-mind
 // Final    = D:\repo-mind\.env
 // ============================================================
-import dotenv from 'dotenv';
-import path from 'path';
 
-const envPath = path.resolve(__dirname, '../../.env');
-const envResult = dotenv.config({ path: envPath });
-
-if (envResult.error) {
-  console.error(`❌ Failed to load .env file from: ${envPath}`);
-  console.error(`   Error: ${envResult.error.message}`);
-  process.exit(1);
-}
-
-console.log(`✅ Environment variables loaded from: ${envPath}`);
+// ============================================================
+// STEP 1: Load environment variables FIRST
+// This MUST be the very first import — it runs dotenv.config()
+// synchronously before any other module can access process.env.
+// ============================================================
+import '@/lib/env';
 
 // ============================================================
 // STEP 2: Patch Express v4 to handle async/await errors properly.
@@ -32,6 +26,8 @@ console.log(`✅ Environment variables loaded from: ${envPath}`);
 // would cause the request to hang forever with no response.
 // ============================================================
 import 'express-async-errors';
+
+
 
 // ============================================================
 // CORE FRAMEWORK IMPORTS
@@ -210,6 +206,10 @@ app.get('/health', (_req: Request, res: Response) => {
     version: '1.0.0',
   });
 });
+
+
+
+
 
 // ============================================================
 // API ROUTES — PLACEHOLDER SECTION
