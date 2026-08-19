@@ -27,8 +27,8 @@ import '@/lib/env';
 // ============================================================
 import 'express-async-errors';
 
-
-
+// PASSPORT — GitHub OAuth authentication
+import passport from '@/lib/passport';
 // ============================================================
 // CORE FRAMEWORK IMPORTS
 // ============================================================
@@ -186,7 +186,10 @@ app.use(
     name: 'repo-mind.sid', // Custom name instead of default 'connect.sid'
   })
 );
-
+// Initialize Passport and enable session support
+// MUST be registered AFTER express-session middleware
+app.use(passport.initialize());
+app.use(passport.session());
 // ============================================================
 // HEALTH CHECK ENDPOINT
 // A simple GET /health route that returns 200 OK.
