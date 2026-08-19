@@ -1,17 +1,3 @@
-# README.md for Repo-Mind
-
-Here's your complete, professional README file.
-
-**Location:** `repo-mind/README.md`
-
-If a `README.md` already exists in the root, replace its entire contents. If not, create it:
-
-```bash
-cd repo-mind
-touch README.md
-```
-
-Now open it and paste this entire content:
 
 ```markdown
 <div align="center">
