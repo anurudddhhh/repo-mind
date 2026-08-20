@@ -89,6 +89,7 @@ export default function DashboardPage() {
         router.push(`/chat/${newRepo.id}`);
       }
     } catch (err: unknown) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       setError((err as any).response?.data?.error || 'Failed to start indexing.');
     } finally {
       setIsSubmitting(false);
