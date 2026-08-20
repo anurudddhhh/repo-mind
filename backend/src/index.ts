@@ -31,6 +31,13 @@ import 'express-async-errors';
 
 // PASSPORT — GitHub OAuth authentication
 import passport from '@/lib/passport';
+
+// ============================================================
+// ROUTE MODULES
+// Each route module handles a group of related endpoints.
+// We import them here and mount them on their path prefix below.
+// ============================================================
+import authRoutes from '@/routes/auth.routes';
 // ============================================================
 // CORE FRAMEWORK IMPORTS
 // ============================================================
@@ -213,51 +220,32 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 
-
-
-// Protected route — must have valid JWT
-app.get('/auth-test-protected', requireAuth, (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    message: 'You are authenticated!',
-    user: {
-      id: req.user!.id,
-      username: req.user!.username,
-      email: req.user!.email,
-    },
-    tokenPayload: req.token,
-  });
-});
-
-// Optional auth route — works with or without JWT
-app.get('/auth-test-optional', optionalAuth, (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    isAuthenticated: !!req.user,
-    message: req.user
-      ? `Hello, ${req.user.username}!`
-      : 'Hello, anonymous visitor!',
-  });
-});
-
-
 // ============================================================
-// API ROUTES — PLACEHOLDER SECTION
-// We will mount our actual route modules here in future steps.
-// Each route module will be imported and mounted like:
-//   import authRoutes from '@/routes/auth';
-//   app.use('/api/auth', authRoutes);
-//
-// We define a temporary placeholder so we can test the server now
-// without needing all routes to exist first.
+// API ROUTES
+// Each route module is mounted on its URL prefix.
+// Order doesn't matter here (unlike middleware), because Express
+// matches routes by path, not by registration order.
 // ============================================================
+app.use('/api/auth', authRoutes);
+
+// Placeholder for future route modules (will be added in later steps)
+// app.use('/api/repositories', repositoryRoutes);  // Phase 4
+// app.use('/api/chat', chatRoutes);                 // Phase 5
+// app.use('/api/search', searchRoutes);              // Phase 6
+
+// API root — shows available endpoints for discoverability
 app.get('/api', (_req: Request, res: Response) => {
   res.status(200).json({
     success: true,
     message: 'Repo-Mind API v1.0.0',
     availableEndpoints: {
       health: 'GET /health',
-      auth: 'GET|POST /api/auth/* (coming in Phase 3)',
+      auth: {
+        login: 'GET /api/auth/github',
+        callback: 'GET /api/auth/github/callback',
+        me: 'GET /api/auth/me',
+        logout: 'POST /api/auth/logout',
+      },
       repositories: 'GET|POST /api/repositories/* (coming in Phase 4)',
       search: 'GET /api/search/* (coming in Phase 6)',
       chat: 'POST /api/chat/* (coming in Phase 5)',

@@ -203,16 +203,30 @@ export interface IndexingProgress {
 
 
 // =============================================================================
-// EXPRESS REQUEST EXTENSION
+// EXPRESS & PASSPORT TYPE EXTENSIONS
 // =============================================================================
-// By default, Express's Request object doesn't know about our custom
-// properties like `user`. We extend it here to add TypeScript support.
+// This is the SINGLE authoritative place where we extend Express's Request.
+// DO NOT declare these types anywhere else — it causes TS2717 conflicts.
+//
+// How Passport typing works:
+//   @types/passport declares req.user as Express.User (an empty interface).
+//   By merging into Express.User below, we tell TypeScript that req.user
+//   has all the fields from our Prisma User model.
+//
+// We also add req.token for the decoded JWT payload.
+// =============================================================================
+import type { User as PrismaUser } from '@prisma/client';
+import type { AppJwtPayload } from '@/lib/jwt';
 
 declare global {
   namespace Express {
+    // Merge Prisma's User fields INTO Passport's User interface.
+    // This makes req.user have all Prisma User fields everywhere.
+    // eslint-disable-next-line @typescript-eslint/no-empty-interface
+    interface User extends PrismaUser {}
+
     interface Request {
-      user?: User;
-      token?: string;
+      token?: AppJwtPayload;
     }
   }
 }

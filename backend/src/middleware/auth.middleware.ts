@@ -26,20 +26,10 @@ import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import type { User as PrismaUser } from '@prisma/client';
 
-// ============================================================
-// EXTEND EXPRESS REQUEST TYPE
-// We import Prisma's User as `PrismaUser` (aliased) to avoid
-// name collisions with our custom User type in @/types.
-// This ensures req.user has the CORRECT fields matching our DB.
-// ============================================================
-declare global {
-  namespace Express {
-    interface Request {
-      user?: PrismaUser;
-      token?: AppJwtPayload;
-    }
-  }
-}
+// Ensures Express.Request type extensions (req.user, req.token) are available.
+// The actual types are declared in @/types/index.ts — the single authoritative
+// location. Do NOT redeclare them here.
+import '@/types';
 
 // ============================================================
 // requireAuth — STRICT AUTHENTICATION
