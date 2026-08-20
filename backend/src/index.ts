@@ -325,8 +325,9 @@ const server = createServer(app);
 // server.listen() tells Node.js to start accepting TCP connections on PORT.
 // The callback fires once the port is successfully bound.
 // ============================================================
-server.listen(PORT, () => {
-  console.log('');
+if (!process.env.VERCEL) {
+  server.listen(PORT, () => {
+    console.log('');
   console.log('  ╔══════════════════════════════════════╗');
   console.log('  ║     🚀 REPO-MIND API STARTED         ║');
   console.log('  ╠══════════════════════════════════════╣');
@@ -336,7 +337,8 @@ server.listen(PORT, () => {
   console.log('  ║  Health Check: GET /health            ║');
   console.log('  ╚══════════════════════════════════════╝');
   console.log('');
-});
+  });
+}
 
 // ============================================================
 // GRACEFUL SHUTDOWN HANDLER
