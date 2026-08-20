@@ -25,7 +25,10 @@ import '@/types';
 // ============================================================
 // ENVIRONMENT VARIABLES
 // ============================================================
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+let FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+if (!FRONTEND_URL.startsWith('http://') && !FRONTEND_URL.startsWith('https://')) {
+  FRONTEND_URL = `https://${FRONTEND_URL}`;
+}
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // ============================================================
