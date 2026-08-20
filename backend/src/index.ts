@@ -38,6 +38,7 @@ import passport from '@/lib/passport';
 // We import them here and mount them on their path prefix below.
 // ============================================================
 import authRoutes from '@/routes/auth.routes';
+import indexingRoutes from '@/routes/indexing.routes';
 // ============================================================
 // CORE FRAMEWORK IMPORTS
 // ============================================================
@@ -227,6 +228,7 @@ app.get('/health', (_req: Request, res: Response) => {
 // matches routes by path, not by registration order.
 // ============================================================
 app.use('/api/auth', authRoutes);
+app.use('/api/indexing', indexingRoutes);
 
 // Placeholder for future route modules (will be added in later steps)
 // app.use('/api/repositories', repositoryRoutes);  // Phase 4
@@ -247,6 +249,10 @@ app.get('/api', (_req: Request, res: Response) => {
         logout: 'POST /api/auth/logout',
       },
       repositories: 'GET|POST /api/repositories/* (coming in Phase 4)',
+      indexing: {
+        start: 'POST /api/indexing/start',
+        status: 'GET /api/indexing/status/:repositoryId',
+      },
       search: 'GET /api/search/* (coming in Phase 6)',
       chat: 'POST /api/chat/* (coming in Phase 5)',
     },
