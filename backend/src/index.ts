@@ -41,6 +41,7 @@ import authRoutes from '@/routes/auth.routes';
 import indexingRoutes from '@/routes/indexing.routes';
 import searchRoutes from '@/routes/search.routes';
 import chatRoutes from '@/routes/chat.routes';
+import { repositoryRoutes } from '@/routes/repository.routes';
 // ============================================================
 // CORE FRAMEWORK IMPORTS
 // ============================================================
@@ -233,6 +234,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/indexing', indexingRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/repositories', repositoryRoutes);
 
 // Placeholder for future route modules (will be added in later steps)
 // app.use('/api/repositories', repositoryRoutes);  // Phase 4

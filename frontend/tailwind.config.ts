@@ -10,7 +10,25 @@ const config: Config = {
     extend: {
       colors: {
         background: "var(--background)",
-        foreground: "var(--foreground)",
+        panel: "var(--panel)",
+        foreground: {
+          DEFAULT: "var(--foreground)",
+          muted: "var(--foreground-muted)",
+        },
+        border: {
+          DEFAULT: "var(--border)",
+          hover: "var(--border-hover)",
+        },
+        primary: {
+          DEFAULT: "var(--primary)",
+          foreground: "var(--primary-foreground)",
+        },
+        success: "var(--success)",
+        error: "var(--error)",
+      },
+      boxShadow: {
+        'premium': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+        'premium-hover': '0 8px 30px -4px rgba(0, 0, 0, 0.08)',
       },
     },
   },

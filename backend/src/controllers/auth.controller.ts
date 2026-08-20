@@ -116,18 +116,16 @@ export async function githubCallback(req: Request, res: Response): Promise<void>
     // ─────────────────────────────────────────────────────
     // STEP 3: Redirect to frontend with token in URL
     // ─────────────────────────────────────────────────────
-    // We pass the token in the URL for two reasons:
-    //   1. Frontend can store it in localStorage as a fallback
-    //      (useful if third-party cookies are blocked)
-    //   2. Frontend can immediately show "welcome" UI without
-    //      needing a follow-up /me API call
-    //
-    // The frontend at /auth/success will:
-    //   1. Read ?token=xxx from URL
-    //   2. Store in localStorage
-    //   3. Clear the URL (window.history.replaceState)
-    //   4. Redirect to /dashboard
-    const redirectUrl = `${FRONTEND_URL}/auth/success?token=${encodeURIComponent(token)}`;
+    const safeUser = {
+      id: user.id,
+      githubId: user.githubId.toString(),
+      username: user.username,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+    };
+    
+    const redirectUrl = `${FRONTEND_URL}/auth/success?token=${encodeURIComponent(token)}&user=${encodeURIComponent(JSON.stringify(safeUser))}`;
 
     res.redirect(redirectUrl);
   } catch (error) {

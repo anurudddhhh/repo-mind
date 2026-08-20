@@ -134,10 +134,18 @@ export async function deleteVectorsByRepository(
 
   logger.info('🗑️ [Pinecone] Deleting vectors for repo', { repositoryId });
 
-  // Pinecone serverless supports deleteMany with metadata filter
-  await ns.deleteMany({ filter: { repositoryId } });
-
-  logger.info('✅ [Pinecone] Vectors deleted', { repositoryId });
+  try {
+    // Pinecone serverless supports deleteMany with metadata filter
+    await ns.deleteMany({ filter: { repositoryId } });
+    logger.info('✅ [Pinecone] Vectors deleted', { repositoryId });
+  } catch (error: any) {
+    // Ignore 404s (e.g. index is empty or namespace doesn't exist yet)
+    if (error?.message?.includes('404')) {
+      logger.info('⚠️ [Pinecone] Vectors delete skipped (404 Not Found)', { repositoryId });
+    } else {
+      throw error;
+    }
+  }
 }
 
 /**

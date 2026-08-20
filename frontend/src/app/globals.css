@@ -3,21 +3,30 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Minimalistic Off-White Theme */
+  --background: #FCFCFC;     /* Very subtle off-white for main bg */
+  --panel: #FFFFFF;          /* Pure white for elevated panels/cards */
+  
+  --foreground: #18181B;     /* Zinc-900 (soft black) for text */
+  --foreground-muted: #71717A; /* Zinc-500 for secondary text */
+  
+  --border: #F4F4F5;         /* Zinc-100 for subtle borders */
+  --border-hover: #E4E4E7;   /* Zinc-200 for hovered borders */
+  
+  --primary: #18181B;        /* Dark zinc for primary buttons */
+  --primary-foreground: #FAFAFA;
+  
+  --success: #10B981;        /* Emerald-500 */
+  --error: #EF4444;          /* Red-500 */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* Force light mode to maintain the aesthetic as requested */
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 @layer utilities {

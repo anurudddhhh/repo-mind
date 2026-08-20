@@ -15,7 +15,7 @@ if (!GROQ_API_KEY) {
 }
 
 const groq = new Groq({ apiKey: GROQ_API_KEY });
-const MODEL = 'llama3-70b-8192'; // Groq's fast Llama-3 model
+const MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'; // Fallback to current model if env missing
 
 /**
  * Handle a chat request: search Pinecone, build prompt, stream response.
