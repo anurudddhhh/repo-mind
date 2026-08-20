@@ -71,7 +71,8 @@ const createPrismaClient = (): PrismaClient => {
 
     const connectionString = process.env.DATABASE_URL!;
     const pool = new Pool({ connectionString });
-    const adapter = new PrismaNeon(pool);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = new PrismaNeon(pool as any);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client = new PrismaClient({
