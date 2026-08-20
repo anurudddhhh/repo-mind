@@ -40,6 +40,7 @@ import passport from '@/lib/passport';
 import authRoutes from '@/routes/auth.routes';
 import indexingRoutes from '@/routes/indexing.routes';
 import searchRoutes from '@/routes/search.routes';
+import chatRoutes from '@/routes/chat.routes';
 // ============================================================
 // CORE FRAMEWORK IMPORTS
 // ============================================================
@@ -231,6 +232,7 @@ app.get('/health', (_req: Request, res: Response) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/indexing', indexingRoutes);
 app.use('/api/search', searchRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Placeholder for future route modules (will be added in later steps)
 // app.use('/api/repositories', repositoryRoutes);  // Phase 4
@@ -256,7 +258,7 @@ app.get('/api', (_req: Request, res: Response) => {
         status: 'GET /api/indexing/status/:repositoryId',
       },
       search: 'POST /api/search/:repositoryId',
-      chat: 'POST /api/chat/* (coming in Phase 5)',
+      chat: 'POST /api/chat/:repositoryId',
     },
   });
 });
