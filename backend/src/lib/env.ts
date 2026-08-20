@@ -7,7 +7,5 @@
 
 // Verify env vars were loaded (should always pass at this point)
 if (!process.env.JWT_SECRET || !process.env.DATABASE_URL) {
-  console.error('❌ Critical environment variables are missing.');
-  console.error('   Ensure env-loader.js runs before this file.');
-  process.exit(1);
+  throw new Error('❌ Critical environment variables are missing (JWT_SECRET or DATABASE_URL).');
 }
