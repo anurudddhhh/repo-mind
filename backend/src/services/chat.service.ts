@@ -4,9 +4,9 @@
 
 import { Response } from 'express';
 import Groq from 'groq-sdk';
-import { prisma } from '@/lib/prisma';
-import { searchRepository, SearchResult } from '@/services/search.service';
-import { logger } from '@/lib/logger';
+import { prisma } from '../lib/prisma';
+import { searchRepository, SearchResult } from './search.service';
+import { logger } from '../lib/logger';
 
 // --- Environment validation ---
 const GROQ_API_KEY = process.env.GROQ_API_KEY;

@@ -3,9 +3,9 @@
 // Converts a user query into an embedding, searches Pinecone,
 // and returns the most relevant code chunks.
 
-import { generateEmbedding } from '@/lib/huggingface';
-import { queryVectors } from '@/lib/pinecone';
-import { logger } from '@/lib/logger';
+import { generateEmbedding } from '../lib/huggingface';
+import { queryVectors } from '../lib/pinecone';
+import { logger } from '../lib/logger';
 
 export interface SearchResult {
   score: number;

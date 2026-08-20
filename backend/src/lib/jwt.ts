@@ -16,7 +16,7 @@
 import jwt, { SignOptions, JwtPayload } from 'jsonwebtoken';
 import type { Request } from 'express';
 import type { User } from '@prisma/client';
-import { logger } from '@/lib/logger';
+import { logger } from './logger';
 
 // ============================================================
 // ENVIRONMENT VARIABLE VALIDATION

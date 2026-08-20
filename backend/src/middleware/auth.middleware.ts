@@ -5,7 +5,7 @@
 // attach the authenticated user to the request object.
 //
 // USAGE:
-//   import { requireAuth } from '@/middleware/auth.middleware';
+//   import { requireAuth } from './auth.middleware';
 //   router.get('/protected', requireAuth, handler);
 //
 // AFTER MIDDLEWARE RUNS:
@@ -21,9 +21,9 @@
 // ============================================================
 
 import type { Request, Response, NextFunction } from 'express';
-import { verifyToken, extractTokenFromRequest, AppJwtPayload } from '@/lib/jwt';
-import { prisma } from '@/lib/prisma';
-import { logger } from '@/lib/logger';
+import { verifyToken, extractTokenFromRequest, AppJwtPayload } from '../lib/jwt';
+import { prisma } from '../lib/prisma';
+import { logger } from '../lib/logger';
 import type { User as PrismaUser } from '@prisma/client';
 
 // Ensures Express.Request type extensions (req.user, req.token) are available.

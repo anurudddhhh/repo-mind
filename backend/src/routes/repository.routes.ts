@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { requireAuth } from '@/middleware/auth.middleware';
-import { getRepositories, deleteRepository } from '@/controllers/repository.controller';
+import { requireAuth } from '../middleware/auth.middleware';
+import { getRepositories, deleteRepository } from '../controllers/repository.controller';
 
 export const repositoryRoutes = Router();
 

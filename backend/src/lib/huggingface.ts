@@ -4,7 +4,7 @@
 // This completely bypasses ISP blocks and rate limits.
 
 import { pipeline, env } from '@xenova/transformers';
-import { logger } from '@/lib/logger';
+import { logger } from './logger';
 
 // Optionally configure local model path or cache dir if needed, but defaults work.
 env.allowLocalModels = false;

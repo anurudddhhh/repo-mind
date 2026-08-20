@@ -2,8 +2,8 @@
 // Splits source files into overlapping chunks for embedding.
 // Phase 2 will replace this with AST-aware semantic chunking.
 
-import { GitHubFileContent } from '@/lib/github';
-import { logger } from '@/lib/logger';
+import { GitHubFileContent } from '../lib/github';
+import { logger } from '../lib/logger';
 
 // --- Configuration ---
 const CHUNK_SIZE_LINES = 60;    // Lines per chunk

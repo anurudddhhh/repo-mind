@@ -21,10 +21,10 @@ import { Router } from 'express';
 import passport from 'passport';
 
 // Controller functions — contain the actual business logic
-import { githubCallback, getMe, logout, authFailure } from '@/controllers/auth.controller';
+import { githubCallback, getMe, logout, authFailure } from '../controllers/auth.controller';
 
 // Middleware — checks JWT and attaches user to req
-import { requireAuth } from '@/middleware/auth.middleware';
+import { requireAuth } from '../middleware/auth.middleware';
 
 // ============================================================
 // CREATE THE ROUTER

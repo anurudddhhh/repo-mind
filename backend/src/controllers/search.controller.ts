@@ -3,8 +3,8 @@
 
 import type { Request, Response } from 'express';
 import '@/types';
-import { prisma } from '@/lib/prisma';
-import { searchRepository } from '@/services/search.service';
+import { prisma } from '../lib/prisma';
+import { searchRepository } from '../services/search.service';
 
 /**
  * POST /api/search/:repositoryId

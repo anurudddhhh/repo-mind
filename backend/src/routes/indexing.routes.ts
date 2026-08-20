@@ -3,8 +3,8 @@
 // GET  /api/indexing/status/:id  → Check indexing job status
 
 import { Router } from 'express';
-import { requireAuth } from '@/middleware/auth.middleware';
-import { startIndexing, getIndexingStatus } from '@/controllers/indexing.controller';
+import { requireAuth } from '../middleware/auth.middleware';
+import { startIndexing, getIndexingStatus } from '../controllers/indexing.controller';
 
 const indexingRouter = Router();
 

@@ -21,8 +21,8 @@
 
 import passport from 'passport';
 import { Strategy as GitHubStrategy, Profile } from 'passport-github2';
-import { prisma } from '@/lib/prisma';
-import { logger } from '@/lib/logger';
+import { prisma } from './prisma';
+import { logger } from './logger';
 import type { User } from '@prisma/client';
 
 // ============================================================

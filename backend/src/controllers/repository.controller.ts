@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
-import { prisma } from '@/lib/prisma';
-import { logger } from '@/lib/logger';
+import { prisma } from '../lib/prisma';
+import { logger } from '../lib/logger';
 import '@/types';
 
 /**
@@ -45,7 +45,7 @@ export async function getRepositories(req: Request, res: Response): Promise<void
  * DELETE /api/repositories/:id
  * Deletes a repository and its associated vectors.
  */
-import { deleteVectorsByRepository } from '@/lib/pinecone';
+import { deleteVectorsByRepository } from '../lib/pinecone';
 
 export async function deleteRepository(req: Request, res: Response): Promise<void> {
   try {

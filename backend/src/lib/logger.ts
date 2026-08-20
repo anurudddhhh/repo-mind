@@ -12,7 +12,7 @@
 //   debug  → Detailed dev-only diagnostics
 //
 // USAGE:
-//   import { logger } from '@/lib/logger';
+//   import { logger } from './logger';
 //   logger.info('User logged in', { userId: '123' });
 //   logger.error('DB connection failed', { error: err.message });
 // ============================================================
@@ -158,7 +158,7 @@ export const logger = winston.createLogger({
 // Winston at the 'http' level instead. This unifies all logs.
 //
 // USAGE (in index.ts):
-//   import { morganStream } from '@/lib/logger';
+//   import { morganStream } from './logger';
 //   app.use(morgan('dev', { stream: morganStream }));
 // ============================================================
 export const morganStream = {

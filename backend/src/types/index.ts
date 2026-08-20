@@ -216,7 +216,7 @@ export interface IndexingProgress {
 // We also add req.token for the decoded JWT payload.
 // =============================================================================
 import type { User as PrismaUser } from '@prisma/client';
-import type { AppJwtPayload } from '@/lib/jwt';
+import type { AppJwtPayload } from '../lib/jwt';
 
 declare global {
   namespace Express {

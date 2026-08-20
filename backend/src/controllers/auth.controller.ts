@@ -14,9 +14,9 @@
 // ============================================================
 
 import type { Request, Response } from 'express';
-import { prisma } from '@/lib/prisma';
-import { generateToken, getTokenExpiryMs } from '@/lib/jwt';
-import { logger } from '@/lib/logger';
+import { prisma } from '../lib/prisma';
+import { generateToken, getTokenExpiryMs } from '../lib/jwt';
+import { logger } from '../lib/logger';
 
 // Ensures Express.Request type extensions (req.user, req.token) are available.
 // The actual types are declared in @/types/index.ts.

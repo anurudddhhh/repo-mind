@@ -3,7 +3,7 @@
 // Index config: 384 dimensions, cosine metric, serverless.
 
 import { Pinecone, Index, RecordMetadata } from '@pinecone-database/pinecone';
-import { logger } from '@/lib/logger';
+import { logger } from './logger';
 
 // --- Environment validation ---
 const PINECONE_API_KEY = process.env.PINECONE_API_KEY;

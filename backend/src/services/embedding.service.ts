@@ -2,10 +2,10 @@
 // Orchestrates: chunks → HuggingFace embeddings → Pinecone storage.
 // Called by the indexing pipeline to process a repository's code.
 
-import { ChunkData } from '@/services/chunking.service';
-import { generateEmbeddings } from '@/lib/huggingface';
-import { upsertVectors, VectorRecord, ChunkMetadata } from '@/lib/pinecone';
-import { logger } from '@/lib/logger';
+import { ChunkData } from './chunking.service';
+import { generateEmbeddings } from '../lib/huggingface';
+import { upsertVectors, VectorRecord, ChunkMetadata } from '../lib/pinecone';
+import { logger } from '../lib/logger';
 
 // --- Configuration ---
 const EMBEDDING_BATCH_SIZE = 16; // Texts sent to HF per API call

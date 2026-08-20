@@ -3,8 +3,8 @@
 
 import type { Request, Response } from 'express';
 import '@/types';
-import { prisma } from '@/lib/prisma';
-import { streamChatResponse } from '@/services/chat.service';
+import { prisma } from '../lib/prisma';
+import { streamChatResponse } from '../services/chat.service';
 
 /**
  * POST /api/chat/:repositoryId

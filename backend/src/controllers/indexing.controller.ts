@@ -5,12 +5,12 @@
 
 import type { Request, Response } from 'express';
 import '@/types';
-import { prisma } from '@/lib/prisma';
-import { createGitHubClient } from '@/lib/github';
-import { chunkRepositoryFiles } from '@/services/chunking.service';
-import { embedAndStoreChunks } from '@/services/embedding.service';
-import { deleteVectorsByRepository } from '@/lib/pinecone';
-import { logger } from '@/lib/logger';
+import { prisma } from '../lib/prisma';
+import { createGitHubClient } from '../lib/github';
+import { chunkRepositoryFiles } from '../services/chunking.service';
+import { embedAndStoreChunks } from '../services/embedding.service';
+import { deleteVectorsByRepository } from '../lib/pinecone';
+import { logger } from '../lib/logger';
 
 /**
  * POST /api/indexing/start

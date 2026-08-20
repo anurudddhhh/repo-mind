@@ -30,18 +30,18 @@ import '@/lib/env';
 import 'express-async-errors';
 
 // PASSPORT — GitHub OAuth authentication
-import passport from '@/lib/passport';
+import passport from './lib/passport';
 
 // ============================================================
 // ROUTE MODULES
 // Each route module handles a group of related endpoints.
 // We import them here and mount them on their path prefix below.
 // ============================================================
-import authRoutes from '@/routes/auth.routes';
-import indexingRoutes from '@/routes/indexing.routes';
-import searchRoutes from '@/routes/search.routes';
-import chatRoutes from '@/routes/chat.routes';
-import { repositoryRoutes } from '@/routes/repository.routes';
+import authRoutes from './routes/auth.routes';
+import indexingRoutes from './routes/indexing.routes';
+import searchRoutes from './routes/search.routes';
+import chatRoutes from './routes/chat.routes';
+import { repositoryRoutes } from './routes/repository.routes';
 // ============================================================
 // CORE FRAMEWORK IMPORTS
 // ============================================================

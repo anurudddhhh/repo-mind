@@ -14,13 +14,13 @@
 //   - If a user revokes access, only their requests fail
 //
 // USAGE:
-//   import { createGitHubClient } from '@/lib/github';
+//   import { createGitHubClient } from './github';
 //   const github = createGitHubClient(user.accessToken);
 //   const files = await github.getRepositoryFiles('owner', 'repo');
 // ============================================================
 
 import { Octokit } from '@octokit/rest';
-import { logger } from '@/lib/logger';
+import { logger } from './logger';
 
 // ============================================================
 // CONFIGURATION
