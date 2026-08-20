@@ -18,6 +18,9 @@
 // ============================================================
 
 import { PrismaClient, Prisma } from '@prisma/client';
+import { Pool, neonConfig } from '@neondatabase/serverless';
+import { PrismaNeon } from '@prisma/adapter-neon';
+import ws from 'ws';
 
 // ============================================================
 // TYPESCRIPT DECLARATION MERGING
@@ -55,39 +58,47 @@ const logConfig: Prisma.LogDefinition[] =
 
 // ============================================================
 // CREATE THE PRISMA CLIENT INSTANCE
-// We wrap creation in a function so we can reuse the logic
-// both for the global cache and for fresh production creation.
+// In production on Render, Prisma's built-in TLS engine has
+// OpenSSL incompatibilities with Neon. We bypass it entirely
+// by using Neon's own WebSocket-based serverless driver.
+// In development, we use the standard Prisma engine.
 // ============================================================
 const createPrismaClient = (): PrismaClient => {
+  if (process.env.NODE_ENV === 'production') {
+    // Configure Neon's serverless driver to use the ws library
+    // for WebSocket connections (required in Node.js environments)
+    neonConfig.webSocketConstructor = ws;
+
+    const connectionString = process.env.DATABASE_URL!;
+    const pool = new Pool({ connectionString });
+    const adapter = new PrismaNeon(pool);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = new PrismaClient({
+      adapter,
+      log: logConfig,
+      errorFormat: 'minimal',
+    } as any);
+
+    return client;
+  }
+
+  // Development: use standard Prisma engine
   const client = new PrismaClient({
     log: logConfig,
-
-    // Error formatting:
-    //   'pretty'    → colored, human-friendly errors (dev)
-    //   'colorless' → no colors (production logs)
-    //   'minimal'   → compact single-line errors
-    errorFormat: process.env.NODE_ENV === 'development' ? 'pretty' : 'minimal',
+    errorFormat: 'pretty',
   });
 
   // In development, hook into the 'query' event to log SQL nicely.
-  // This shows us:
-  //   - The SQL that was actually sent to PostgreSQL
-  //   - How long the query took (helps identify slow queries)
-  //   - The parameters that were passed
-  if (process.env.NODE_ENV === 'development') {
-    // Casting to `any` here is necessary because Prisma's TypeScript
-    // types for the .$on() event system don't perfectly match runtime.
-    // This is a well-known Prisma quirk.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (client.$on as any)('query', (e: Prisma.QueryEvent) => {
-      console.log('\n📊 PRISMA QUERY');
-      console.log(`   ⏱  Duration : ${e.duration}ms`);
-      console.log(`   📝 Query    : ${e.query}`);
-      if (e.params && e.params !== '[]') {
-        console.log(`   🔧 Params   : ${e.params}`);
-      }
-    });
-  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (client.$on as any)('query', (e: Prisma.QueryEvent) => {
+    console.log('\n📊 PRISMA QUERY');
+    console.log(`   ⏱  Duration : ${e.duration}ms`);
+    console.log(`   📝 Query    : ${e.query}`);
+    if (e.params && e.params !== '[]') {
+      console.log(`   🔧 Params   : ${e.params}`);
+    }
+  });
 
   return client;
 };

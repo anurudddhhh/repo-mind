@@ -26,9 +26,11 @@
     "@langchain/community": "0.3.37",
     "@langchain/core": "0.3.37",
     "@langchain/groq": "0.1.3",
+    "@neondatabase/serverless": "^1.1.0",
     "@octokit/auth-token": "^6.0.0",
     "@octokit/rest": "^22.0.0",
     "@pinecone-database/pinecone": "^8.2.0",
+    "@prisma/adapter-neon": "^7.9.1",
     "@prisma/client": "^5.22.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.2",
@@ -51,6 +53,7 @@
     "uuid": "^14.0.0",
     "web-tree-sitter": "^0.26.0",
     "winston": "^3.19.0",
+    "ws": "^8.21.3",
     "zod": "3.22.0"
   },
   "devDependencies": {
@@ -65,6 +68,7 @@
     "@types/passport": "^1.0.17",
     "@types/passport-github2": "^1.2.9",
     "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
     "dotenv-cli": "^11.0.0",
     "nodemon": "^3.1.14",
     "prisma": "^5.22.0",

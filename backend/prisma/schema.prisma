@@ -14,7 +14,8 @@
 // that we import as `import { PrismaClient } from '@prisma/client'`
 // -----------------------------------------------------------
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 // -----------------------------------------------------------
