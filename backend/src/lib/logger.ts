@@ -117,7 +117,7 @@ const transports: winston.transport[] = [
 
 // File transports — only in non-test environments
 // (we don't want tests writing log files)
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV !== 'test' && !process.env.VERCEL) {
   transports.push(
     // General log file — captures all levels
     new winston.transports.File({
