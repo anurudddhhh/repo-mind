@@ -17,7 +17,7 @@
 // This MUST be the very first import — it runs dotenv.config()
 // synchronously before any other module can access process.env.
 // ============================================================
-import '@/lib/env';
+import './lib/env';
 
 
 

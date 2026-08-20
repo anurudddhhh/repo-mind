@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { logger } from '../lib/logger';
-import '@/types';
+import '../types';
 
 /**
  * GET /api/repositories

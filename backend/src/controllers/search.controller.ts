@@ -2,7 +2,7 @@
 // Exposes the semantic search functionality via an HTTP endpoint.
 
 import type { Request, Response } from 'express';
-import '@/types';
+import '../types';
 import { prisma } from '../lib/prisma';
 import { searchRepository } from '../services/search.service';
 

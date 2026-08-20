@@ -29,7 +29,7 @@ import type { User as PrismaUser } from '@prisma/client';
 // Ensures Express.Request type extensions (req.user, req.token) are available.
 // The actual types are declared in @/types/index.ts — the single authoritative
 // location. Do NOT redeclare them here.
-import '@/types';
+import '../types';
 
 // ============================================================
 // requireAuth — STRICT AUTHENTICATION

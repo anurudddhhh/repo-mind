@@ -4,7 +4,7 @@
 // Streams progress to the client via SSE.
 
 import type { Request, Response } from 'express';
-import '@/types';
+import '../types';
 import { prisma } from '../lib/prisma';
 import { createGitHubClient } from '../lib/github';
 import { chunkRepositoryFiles } from '../services/chunking.service';

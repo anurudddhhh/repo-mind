@@ -20,7 +20,7 @@ import { logger } from '../lib/logger';
 
 // Ensures Express.Request type extensions (req.user, req.token) are available.
 // The actual types are declared in @/types/index.ts.
-import '@/types';
+import '../types';
 
 // ============================================================
 // ENVIRONMENT VARIABLES
