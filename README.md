@@ -19,9 +19,22 @@
 
 </div>
 
+---
+
+## 🎬 Live Demo
+
+> **See Repo-Mind in action!** Watch the full walkthrough demo showcasing repository indexing, AI chat, architecture visualization, and more.
+
+<div align="center">
+
+[![Watch Demo](https://img.shields.io/badge/▶_Watch_Live_Demo-Google_Drive-4285F4?style=for-the-badge&logo=googledrive&logoColor=white)](https://drive.google.com/file/d/17Egb199UGtcNjZQSeTYP46ZgTSgAAGqR/view?usp=drive_link)
+
+</div>
+
 
 ## 📋 Table of Contents
 
+- [Live Demo](#-live-demo)
 - [Features](#-features)
 - [System Architecture](#-system-architecture)
 - [Tech Stack](#-tech-stack)
