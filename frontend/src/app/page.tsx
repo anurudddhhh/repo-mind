@@ -4,7 +4,6 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Github } from '@/components/icons/Github';
 import { useAuthStore } from '@/store/useAuthStore';
-import { API_BASE_URL } from '@/lib/api';
 
 export default function Home() {
   const router = useRouter();
@@ -18,8 +17,8 @@ export default function Home() {
   }, [isAuthenticated, router]);
 
   const handleLogin = () => {
-    // Redirect to backend OAuth flow
-    window.location.href = `${API_BASE_URL}/api/auth/github`;
+    // Redirect to backend OAuth flow via Next.js proxy
+    window.location.href = '/api/auth/github';
   };
 
   if (isAuthenticated) {

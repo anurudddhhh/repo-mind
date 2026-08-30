@@ -25,6 +25,7 @@ import {
   CommitAnalysis,
   User,
 } from '@/types';
+import { useAuthStore } from '@/store/useAuthStore';
 
 // =============================================================================
 // AXIOS INSTANCE CONFIGURATION
@@ -64,16 +65,13 @@ const apiClient: AxiosInstance = axios.create({
 
 apiClient.interceptors.request.use(
   (config) => {
-    // localStorage is only available in the browser, not during SSR
-    // typeof check prevents crashes when this runs on the server
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('repo_mind_token');
+    // Read JWT from the Zustand auth store (single source of truth)
+    const token = useAuthStore.getState().token;
 
-      if (token) {
-        // Attach it as a Bearer token in the Authorization header
-        // The backend middleware reads this to identify the user
-        config.headers.Authorization = `Bearer ${token}`;
-      }
+    if (token) {
+      // Attach it as a Bearer token in the Authorization header
+      // The backend middleware reads this to identify the user
+      config.headers.Authorization = `Bearer ${token}`;
     }
 
     return config;
@@ -97,9 +95,9 @@ apiClient.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401 && typeof window !== 'undefined') {
       // 401 = Unauthorized. The user's session has expired.
-      // Clear their token and redirect to login page.
-      localStorage.removeItem('repo_mind_token');
-      window.location.href = '/login';
+      // Clear auth state via Zustand store and redirect to login page.
+      useAuthStore.getState().logout();
+      window.location.href = '/';
     }
 
     return Promise.reject(error);
@@ -138,28 +136,14 @@ export const authApi = {
    */
   logout: async (): Promise<void> => {
     await apiClient.post('/auth/logout');
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('repo_mind_token');
-    }
+    useAuthStore.getState().logout();
   },
 
   /**
-   * Store the JWT token received after OAuth callback.
-   */
-  setToken: (token: string): void => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('repo_mind_token', token);
-    }
-  },
-
-  /**
-   * Get the stored JWT token.
+   * Get the stored JWT token from the Zustand auth store.
    */
   getToken: (): string | null => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('repo_mind_token');
-    }
-    return null;
+    return useAuthStore.getState().token;
   },
 };
 
@@ -230,9 +214,7 @@ export const indexingApi = {
    * progress messages as it processes the repository.
    */
   startIndexing: (repoId: string): EventSource => {
-    const token = typeof window !== 'undefined'
-      ? localStorage.getItem('repo_mind_token')
-      : '';
+    const token = useAuthStore.getState().token ?? '';
     const url = `/api/repos/${repoId}/index?token=${token}`;
     return new EventSource(url);
   },
@@ -301,13 +283,11 @@ export const chatApi = {
     message: string,
     conversationHistory: Array<{ role: string; content: string }>
   ): EventSource => {
-    const token = typeof window !== 'undefined'
-      ? localStorage.getItem('repo_mind_token')
-      : '';
+    const token = useAuthStore.getState().token ?? '';
     const params = new URLSearchParams({
       message,
       history: JSON.stringify(conversationHistory),
-      token: token ?? '',
+      token,
     });
     return new EventSource(`/api/chat/${repoId}/stream?${params.toString()}`);
   },

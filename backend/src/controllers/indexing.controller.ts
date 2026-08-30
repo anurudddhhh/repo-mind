@@ -1,6 +1,6 @@
 // Indexing Controller
 // Orchestrates the full repo indexing pipeline:
-// GitHub fetch → chunk → embed → store in Pinecone
+// GitHub fetch → AST semantic chunk → embed → store in Pinecone
 // Streams progress to the client via SSE.
 
 import type { Request, Response } from 'express';
@@ -118,12 +118,15 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // --- Stage 3: Chunk files ---
-    sendEvent({ stage: 'parsing', message: 'Chunking files...', progress: 35 });
-    const chunks = chunkRepositoryFiles(files, repository.id);
+    // --- Stage 3: Chunk files with AST ---
+    sendEvent({ stage: 'parsing', message: 'Parsing AST and chunking semantically...', progress: 35 });
+    
+    // Await the async AST chunking function
+    const chunks = await chunkRepositoryFiles(files, repository.id);
+
     sendEvent({
       stage: 'parsing',
-      message: `Created ${chunks.length} chunks from ${files.length} files`,
+      message: `Created ${chunks.length} semantic chunks from ${files.length} files`,
       progress: 50,
     });
 
