@@ -5,6 +5,7 @@
 //   - Architecture Summaries (GET /api/analyze/:repoId/architecture)
 //   - Bug & Vulnerability Scans (POST /api/analyze/:repoId/bugs)
 //   - Technical Documentation (POST /api/analyze/:repoId/docs)
+//   - Commit History & Contributor Analytics (GET /api/analyze/:repoId/commits)
 //
 // Enforces repository ownership and ensures repos are fully indexed before analysis.
 // =============================================================================
@@ -17,6 +18,7 @@ import {
   detectBugsInRepository,
   generateDocumentation,
 } from '../services/analysis.service';
+import { analyzeCommitHistory } from '../services/commit.service';
 import { logger } from '../lib/logger';
 
 /**
@@ -183,6 +185,59 @@ export async function getDocumentation(req: Request, res: Response): Promise<voi
     res.status(500).json({
       success: false,
       error: 'Failed to generate documentation',
+      message: error?.message || 'Internal server error',
+    });
+  }
+}
+
+/**
+ * GET /api/analyze/:repoId/commits
+ * Query params: ?refresh=true (optional)
+ *
+ * Feature 08: Analyzes recent commit history, contributors, and development velocity.
+ */
+export async function getCommitAnalysis(req: Request, res: Response): Promise<void> {
+  const { repoId } = req.params;
+  const user = req.user!;
+  const forceRefresh = req.query.refresh === 'true';
+
+  try {
+    // 1. Verify user owns repository
+    const repository = await prisma.repository.findFirst({
+      where: {
+        id: repoId,
+        userId: user.id,
+      },
+    });
+
+    if (!repository) {
+      res.status(404).json({
+        success: false,
+        error: 'Repository not found or access denied',
+      });
+      return;
+    }
+
+    // 2. Run commit history analysis using user's GitHub access token
+    const analysis = await analyzeCommitHistory(
+      repoId,
+      user.accessToken,
+      forceRefresh
+    );
+
+    res.status(200).json({
+      success: true,
+      data: analysis,
+    });
+  } catch (error: any) {
+    logger.error('❌ [Analysis Controller] Failed to analyze commits:', {
+      repoId,
+      error: error?.message || String(error),
+    });
+
+    res.status(500).json({
+      success: false,
+      error: 'Failed to analyze commit history',
       message: error?.message || 'Internal server error',
     });
   }
