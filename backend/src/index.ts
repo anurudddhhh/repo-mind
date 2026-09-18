@@ -106,11 +106,11 @@ app.use(
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: {
+        cookie: {
       secure: NODE_ENV === 'production',
       httpOnly: true,
       maxAge: 10 * 60 * 1000,
-      sameSite: NODE_ENV === 'production' ? 'strict' : 'lax',
+      sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
     },
     name: 'repo-mind.sid',
   })
