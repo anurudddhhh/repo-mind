@@ -1,4 +1,4 @@
-Set-Content -Path "D:\repo-mind\render.yaml" -Value @'
+
 services:
   - type: web
     name: repo-mind-backend
