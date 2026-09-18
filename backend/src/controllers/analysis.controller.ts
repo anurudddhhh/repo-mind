@@ -33,7 +33,6 @@ export async function getArchitectureSummary(req: Request, res: Response): Promi
   const forceRefresh = req.query.refresh === 'true';
 
   try {
-    // 1. Verify user owns repository
     const repository = await prisma.repository.findFirst({
       where: {
         id: repoId,
@@ -49,7 +48,6 @@ export async function getArchitectureSummary(req: Request, res: Response): Promi
       return;
     }
 
-    // 2. Verify repository has been indexed
     if (repository.indexingStatus !== 'COMPLETED') {
       res.status(400).json({
         success: false,
@@ -58,7 +56,6 @@ export async function getArchitectureSummary(req: Request, res: Response): Promi
       return;
     }
 
-    // 3. Generate or fetch architecture summary
     const summary = await generateArchitectureSummary(repoId, forceRefresh);
 
     res.status(200).json({
@@ -136,6 +133,7 @@ export async function scanForBugs(req: Request, res: Response): Promise<void> {
 
 /**
  * POST /api/analyze/:repoId/docs
+ * Query params: ?refresh=true (optional)
  * Body: { filePath?: string } (optional - if omitted, generates full README)
  *
  * Generates technical documentation for a specific file or the entire repository.
@@ -143,6 +141,7 @@ export async function scanForBugs(req: Request, res: Response): Promise<void> {
 export async function getDocumentation(req: Request, res: Response): Promise<void> {
   const { repoId } = req.params;
   const { filePath } = req.body || {};
+  const forceRefresh = req.query.refresh === 'true'; // <--- FIX: Extract forceRefresh flag
   const user = req.user!;
 
   try {
@@ -169,7 +168,8 @@ export async function getDocumentation(req: Request, res: Response): Promise<voi
       return;
     }
 
-    const docs = await generateDocumentation(repoId, filePath);
+    // Pass forceRefresh to bypass stale empty cache entries
+    const docs = await generateDocumentation(repoId, filePath, forceRefresh);
 
     res.status(200).json({
       success: true,
@@ -202,7 +202,6 @@ export async function getCommitAnalysis(req: Request, res: Response): Promise<vo
   const forceRefresh = req.query.refresh === 'true';
 
   try {
-    // 1. Verify user owns repository
     const repository = await prisma.repository.findFirst({
       where: {
         id: repoId,
@@ -218,7 +217,6 @@ export async function getCommitAnalysis(req: Request, res: Response): Promise<vo
       return;
     }
 
-    // 2. Run commit history analysis using user's GitHub access token
     const analysis = await analyzeCommitHistory(
       repoId,
       user.accessToken,

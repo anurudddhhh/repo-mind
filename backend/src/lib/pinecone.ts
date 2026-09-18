@@ -1,5 +1,5 @@
 // Pinecone Vector Database Client
-// Handles storing, querying, and deleting code embeddings.
+// Handles storing, querying, and deleting code embeddings with auto-retry resilience.
 // Index config: 384 dimensions, cosine metric, serverless.
 
 import { Pinecone, Index, RecordMetadata } from '@pinecone-database/pinecone';
@@ -13,9 +13,6 @@ if (!PINECONE_API_KEY) {
   throw new Error('PINECONE_API_KEY is not set in .env');
 }
 
-// --- Singleton client ---
-// Pinecone SDK handles connection pooling internally.
-// We create one client and reuse it across the app.
 let pineconeClient: Pinecone | null = null;
 let pineconeIndex: Index | null = null;
 
@@ -35,9 +32,10 @@ function getPineconeIndex(): Index {
   return pineconeIndex;
 }
 
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // --- Types ---
 
-/** Metadata stored alongside each vector in Pinecone */
 export interface ChunkMetadata extends RecordMetadata {
   repositoryId: string;
   filePath: string;
@@ -45,17 +43,15 @@ export interface ChunkMetadata extends RecordMetadata {
   startLine: number;
   endLine: number;
   language: string;
-  content: string; // Store raw text for retrieval without a second DB call
+  content: string;
 }
 
-/** A vector record ready to upsert into Pinecone */
 export interface VectorRecord {
   id: string;
-  values: number[];       // 384-dimensional embedding
+  values: number[];
   metadata: ChunkMetadata;
 }
 
-/** A search result from Pinecone with score + metadata */
 export interface VectorSearchResult {
   id: string;
   score: number;
@@ -66,7 +62,7 @@ export interface VectorSearchResult {
 
 /**
  * Store embedding vectors in Pinecone.
- * Processes in batches of 100 (Pinecone's recommended max per upsert).
+ * Uses a safe batch size of 30 vectors with automatic retry backoff to handle network drops.
  */
 export async function upsertVectors(
   vectors: VectorRecord[],
@@ -74,29 +70,44 @@ export async function upsertVectors(
 ): Promise<void> {
   const index = getPineconeIndex();
   const ns = index.namespace(namespace || '');
-  const BATCH_SIZE = 100;
+  const BATCH_SIZE = 30; // Reduced from 100 for network safety over home Wi-Fi
 
-  logger.info('📌 [Pinecone] Upserting vectors', {
+  logger.info('📌 [Pinecone] Upserting vectors in resilient batches', {
     count: vectors.length,
+    batchSize: BATCH_SIZE,
     namespace: namespace || 'default',
   });
 
   for (let i = 0; i < vectors.length; i += BATCH_SIZE) {
     const batch = vectors.slice(i, i + BATCH_SIZE);
-    await ns.upsert({ records: batch });
+    let attempts = 0;
+    let success = false;
 
-    if (vectors.length > BATCH_SIZE) {
-      const progress = Math.min(i + BATCH_SIZE, vectors.length);
-      logger.debug(`📌 [Pinecone] Upserted ${progress}/${vectors.length}`);
+    while (attempts < 3 && !success) {
+      try {
+        attempts++;
+        await ns.upsert({ records: batch });
+        success = true;
+      } catch (err: any) {
+        logger.warn(`⚠️ [Pinecone] Batch ${i / BATCH_SIZE + 1} upsert attempt ${attempts} failed. Retrying...`, {
+          error: err?.message || String(err),
+        });
+        if (attempts < 3) {
+          await delay(1500 * attempts); // Pause 1.5s, 3.0s before retrying
+        }
+      }
+    }
+
+    if (!success) {
+      logger.error(`❌ [Pinecone] Batch ${i / BATCH_SIZE + 1} failed after 3 attempts. Continuing pipeline...`);
     }
   }
 
-  logger.info('✅ [Pinecone] Upsert complete', { count: vectors.length });
+  logger.info('✅ [Pinecone] Vector upsert batching complete', { count: vectors.length });
 }
 
 /**
  * Query Pinecone for the most similar vectors to the given embedding.
- * Returns top-K results with metadata.
  */
 export async function queryVectors(
   queryEmbedding: number[],
@@ -107,23 +118,36 @@ export async function queryVectors(
   const index = getPineconeIndex();
   const ns = index.namespace(namespace || '');
 
-  const result = await ns.query({
-    vector: queryEmbedding,
-    topK,
-    filter,
-    includeMetadata: true,
-  });
+  let attempts = 0;
+  while (attempts < 3) {
+    try {
+      attempts++;
+      const result = await ns.query({
+        vector: queryEmbedding,
+        topK,
+        filter,
+        includeMetadata: true,
+      });
 
-  return (result.matches || []).map((match) => ({
-    id: match.id,
-    score: match.score || 0,
-    metadata: match.metadata as ChunkMetadata,
-  }));
+      return (result.matches || []).map((match) => ({
+        id: match.id,
+        score: match.score || 0,
+        metadata: match.metadata as ChunkMetadata,
+      }));
+    } catch (error: any) {
+      if (attempts >= 3) {
+        logger.error('❌ [Pinecone] Vector query failed after 3 attempts:', { error: error?.message });
+        throw error;
+      }
+      await delay(1000);
+    }
+  }
+
+  return [];
 }
 
 /**
  * Delete all vectors for a specific repository.
- * Used when re-indexing a repo to avoid stale data.
  */
 export async function deleteVectorsByRepository(
   repositoryId: string,
@@ -135,15 +159,13 @@ export async function deleteVectorsByRepository(
   logger.info('🗑️ [Pinecone] Deleting vectors for repo', { repositoryId });
 
   try {
-    // Pinecone serverless supports deleteMany with metadata filter
     await ns.deleteMany({ filter: { repositoryId } });
     logger.info('✅ [Pinecone] Vectors deleted', { repositoryId });
   } catch (error: any) {
-    // Ignore 404s (e.g. index is empty or namespace doesn't exist yet)
     if (error?.message?.includes('404')) {
       logger.info('⚠️ [Pinecone] Vectors delete skipped (404 Not Found)', { repositoryId });
     } else {
-      throw error;
+      logger.warn('⚠️ [Pinecone] Delete failed non-critically:', { error: error?.message });
     }
   }
 }

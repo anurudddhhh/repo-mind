@@ -2,12 +2,12 @@
   "name": "frontend",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
+"scripts": {
+  "dev": "node --max-old-space-size=2048 ./node_modules/next/dist/bin/next dev",
+  "build": "node --max-old-space-size=2048 ./node_modules/next/dist/bin/next build",
+  "start": "node --max-old-space-size=2048 ./node_modules/next/dist/bin/next start",
+  "lint": "next lint"
+},
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
     "@types/react-syntax-highlighter": "^15.5.13",

@@ -1,8 +1,8 @@
 // =============================================================================
-// GROQ AI CLIENT & COMPLETION SERVICE
+// GROQ AI CLIENT & COMPLETION SERVICE (WITH 429 BACKOFF & CLIENT-SIDE JSON EXTRACTION)
 // =============================================================================
-// Provides a unified interface to execute AI prompts using Groq's high-speed
-// inference engine. Supports standard text generation and structured JSON output.
+// Unified interface to execute AI prompts using Groq's high-speed engine.
+// Bypasses brittle server-side JSON mode to prevent HTTP 400 json_validate_failed errors.
 // =============================================================================
 
 import Groq from 'groq-sdk';
@@ -36,16 +36,16 @@ export interface GroqCompletionOptions {
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
-  jsonMode?: boolean;
   model?: string;
+  retryCount?: number;
 }
 
+// Asynchronous sleep helper
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * Generate a text completion or structured JSON from Groq.
- *
- * @param prompt - The user prompt or code context
- * @param options - Additional parameters (system prompt, temperature, jsonMode)
- * @returns Generated string response
+ * Generate a text completion from Groq.
+ * Automatically retries up to 3 times on 429 rate limit errors with backoff.
  */
 export async function generateGroqCompletion(
   prompt: string,
@@ -53,6 +53,8 @@ export async function generateGroqCompletion(
 ): Promise<string> {
   const client = getGroqClient();
   const model = options.model || DEFAULT_MODEL;
+  const currentRetry = options.retryCount || 0;
+  const MAX_RETRIES = 3;
 
   const messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [];
 
@@ -72,58 +74,73 @@ export async function generateGroqCompletion(
     const response = await client.chat.completions.create({
       model,
       messages,
-      temperature: options.temperature ?? 0.2, // Low temperature for deterministic analysis
-      max_tokens: options.maxTokens ?? 4096,
-      response_format: options.jsonMode ? { type: 'json_object' } : undefined,
+      temperature: options.temperature ?? 0.1,
+      max_tokens: options.maxTokens ?? 2500,
     });
 
     const content = response.choices[0]?.message?.content || '';
     return content.trim();
   } catch (error: any) {
-    logger.error('❌ [Groq] Completion request failed:', {
-      model,
-      error: error?.message || String(error),
-    });
+    const errorMsg = error?.message || String(error);
+    const isRateLimit = errorMsg.includes('429') || errorMsg.toLowerCase().includes('rate limit');
 
-    // Fallback: If 120B model fails, fallback to 20B
-    if (model !== 'openai/gpt-oss-20b') {
-      logger.warn('⚠️ [Groq] Attempting fallback to openai/gpt-oss-20b...');
+    // 1. Handle 429 Rate Limits with exponential backoff
+    if (isRateLimit && currentRetry < MAX_RETRIES) {
+      const waitMatch = errorMsg.match(/try again in ([\d\.]+)s/i);
+      const parsedWaitSec = waitMatch ? parseFloat(waitMatch[1]) : 6;
+      const waitMs = Math.ceil(parsedWaitSec * 1000) + 1500;
+
+      logger.warn(`⏳ [Groq] 429 Rate limit encountered (Attempt ${currentRetry + 1}/${MAX_RETRIES}). Pausing for ${(waitMs / 1000).toFixed(1)}s...`);
+      
+      await delay(waitMs);
+
       return generateGroqCompletion(prompt, {
         ...options,
-        model: 'openai/gpt-oss-20b',
+        retryCount: currentRetry + 1,
       });
     }
+
+    logger.error('❌ [Groq] Completion request failed:', {
+      model,
+      error: errorMsg,
+    });
 
     throw error;
   }
 }
 
 /**
- * Convenience helper to generate and automatically parse JSON responses.
- *
- * @param prompt - The user prompt requesting JSON output
- * @param options - Additional parameters
- * @returns Parsed JSON object of type T
+ * Convenience helper to generate and reliably parse JSON responses.
+ * Avoids passing response_format: { type: "json_object" } to prevent Groq API 400 errors.
  */
 export async function generateGroqJSON<T>(
   prompt: string,
-  options: Omit<GroqCompletionOptions, 'jsonMode'> = {}
+  options: GroqCompletionOptions = {}
 ): Promise<T> {
-  const rawText = await generateGroqCompletion(prompt, {
-    ...options,
-    jsonMode: true,
-  });
+  const jsonPrompt = `${prompt}\n\nCRITICAL: Respond ONLY with a valid JSON object starting with { and ending with }. Do NOT include any markdown formatting, text explanations, or code fences outside the JSON object.`;
+
+  const rawText = await generateGroqCompletion(jsonPrompt, options);
+
+  // Extract JSON string using robust regex matcher
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  const jsonString = jsonMatch ? jsonMatch[0] : rawText;
 
   try {
-    return JSON.parse(rawText) as T;
-  } catch (error) {
-    // If wrapped in Markdown triple backticks ```json ... ```, clean it
-    const cleaned = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '');
+    return JSON.parse(jsonString) as T;
+  } catch (firstErr) {
+    // Light cleanup for common LLM JSON quirks (trailing commas, control characters)
+    const cleaned = jsonString
+      .replace(/,\s*([\]}])/g, '$1') // Remove trailing commas
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove unescaped control chars
+      .trim();
+
     try {
       return JSON.parse(cleaned) as T;
-    } catch {
-      logger.error('❌ [Groq] Failed to parse JSON response:', { rawText });
-      throw new Error(`Groq returned invalid JSON: ${rawText.slice(0, 100)}...`);
+    } catch (secondErr) {
+      logger.error('❌ [Groq] Failed to parse JSON response:', {
+        rawSnippet: rawText.slice(0, 200),
+      });
+      throw new Error(`Failed to parse AI JSON response`);
     }
   }
 }
@@ -134,7 +151,7 @@ export async function generateGroqJSON<T>(
 export async function testGroqConnection(): Promise<boolean> {
   try {
     const response = await generateGroqCompletion('Respond with "OK"', {
-      maxTokens: 50,
+      maxTokens: 10,
     });
     return response.length > 0;
   } catch {

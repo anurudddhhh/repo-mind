@@ -97,7 +97,7 @@ export async function streamChatResponse(
       ],
       model: MODEL,
       stream: true,
-      temperature: 0.2,
+      temperature: 0.1,
     });
 
     // 7. Stream text chunks
@@ -178,13 +178,18 @@ You help developers understand, query, and visualize their codebases.
 Below are snippets of code from the user's repository that are semantically relevant to their question:
 ${contextString}
 
-CRITICAL INSTRUCTIONS:
-1. Base your answers on the provided context snippets wherever possible.
-2. Mention the file paths when discussing components or logic (e.g. "In \`src/auth.ts\`...").
-3. Keep your explanation clear, structured, and developer-friendly.
+STRICT FORMATTING INSTRUCTIONS (ALWAYS FOLLOW):
+1. NEVER use Markdown pipe tables (do NOT use | Column 1 | Column 2 |). Tables look unreadable in streaming chat windows.
+2. ALWAYS use structured bullet points and bold section headers instead of tables.
+   For example, instead of a table, write:
+   ### Layer Name
+   - **Key Files**: \`src/file.js\`, \`src/app.js\`
+   - **Description**: Concise explanation of what happens.
+3. Mention real file paths when discussing logic (e.g., "In \`src/auth.ts\`...").
+4. Keep explanations clean, spacious, and developer-friendly with proper paragraph breaks.
 ${
   diagramIncluded
-    ? '4. An interactive Mermaid.js diagram has already been generated above. Provide a concise textual explanation walking through the visual flow.'
-    : '4. If providing code examples, format them with appropriate markdown syntax tags.'
+    ? '5. An interactive Mermaid.js diagram has already been generated above. Provide a concise textual explanation walking through the visual flow.'
+    : '5. For code examples, format them with fenced markdown code blocks specifying the language.'
 }`;
 }

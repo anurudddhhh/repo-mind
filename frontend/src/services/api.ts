@@ -1,130 +1,64 @@
 // =============================================================================
-// REPO-MIND FRONTEND - API SERVICE LAYER
+// REPO-MIND FRONTEND — UNIFIED API SERVICE LAYER
 // =============================================================================
 // This is the SINGLE source of truth for all backend communication.
-// NO component should ever call fetch() or axios directly.
-// ALL API calls go through this file.
-//
-// Why? Because if our backend URL changes, or we add authentication headers,
-// or we want to add logging — we change it in ONE place, not in 50 components.
-//
-// Think of this like a dedicated phone operator:
-// Components say "I need data" → API service makes the actual call
+// NO component should ever call fetch() or axios directly (except for SSE
+// streaming, which requires native fetch — see streamChat and startIndexing).
 // =============================================================================
 
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import { api, API_BASE_URL } from '@/lib/api';
 import {
   ApiResponse,
   Repository,
-  GitHubRepository,
   SearchResponse,
-  IndexingProgress,
   ArchitectureSummary,
   BugDetectionResult,
   DocumentationResult,
   CommitAnalysis,
   User,
+  IndexingProgress,
 } from '@/types';
 import { useAuthStore } from '@/store/useAuthStore';
 
 // =============================================================================
-// AXIOS INSTANCE CONFIGURATION
+// FILE TREE TYPES (for getRepositoryTree)
 // =============================================================================
-// We create a single configured axios instance instead of using axios directly.
-// This instance automatically:
-// 1. Prepends the base URL to every request
-// 2. Sends cookies with every request (for authentication)
-// 3. Sets Content-Type header to JSON for every request
-// =============================================================================
+export interface TreeSymbol {
+  name: string;
+  type: string;
+  lines: string;
+}
 
-const apiClient: AxiosInstance = axios.create({
-  // During development, Next.js proxies /api/* to our backend (via next.config.mjs)
-  // In production, this would be our deployed backend URL
-  baseURL: '/api',
+export interface TreeFileItem {
+  filePath: string;
+  language: string;
+  symbolsCount: number;
+  symbols: TreeSymbol[];
+}
 
-  // withCredentials: true sends cookies with cross-origin requests
-  // This is how our JWT session cookie gets sent to the backend
-  withCredentials: true,
-
-  headers: {
-    'Content-Type': 'application/json',
-  },
-
-  // Timeout after 30 seconds (AI responses can take a while)
-  timeout: 30000,
-});
-
+export interface RepositoryTreeResponse {
+  totalFiles: number;
+  files: TreeFileItem[];
+}
 
 // =============================================================================
-// REQUEST INTERCEPTOR
+// AUTH API
 // =============================================================================
-// Interceptors run on EVERY request/response automatically.
-// This request interceptor runs BEFORE every API call is sent.
-// We use it to attach the JWT token from localStorage to every request.
-// =============================================================================
-
-apiClient.interceptors.request.use(
-  (config) => {
-    // Read JWT from the Zustand auth store (single source of truth)
-    const token = useAuthStore.getState().token;
-
-    if (token) {
-      // Attach it as a Bearer token in the Authorization header
-      // The backend middleware reads this to identify the user
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
-
-
-// =============================================================================
-// RESPONSE INTERCEPTOR
-// =============================================================================
-// This runs AFTER every response comes back from the backend.
-// We use it to handle global errors like 401 (unauthorized = logged out).
-// =============================================================================
-
-apiClient.interceptors.response.use(
-  // If response is successful, just return it as-is
-  (response: AxiosResponse) => response,
-
-  // If response has an error status code:
-  (error) => {
-    if (error.response?.status === 401 && typeof window !== 'undefined') {
-      // 401 = Unauthorized. The user's session has expired.
-      // Clear auth state via Zustand store and redirect to login page.
-      useAuthStore.getState().logout();
-      window.location.href = '/';
-    }
-
-    return Promise.reject(error);
-  }
-);
-
-
-// =============================================================================
-// AUTH API CALLS
-// =============================================================================
-
 export const authApi = {
   /**
-   * Get the GitHub OAuth login URL from our backend.
-   * Redirects the user to GitHub to authorize our app.
+   * Get the GitHub OAuth login URL.
    */
   getGithubLoginUrl: (): string => {
-    return `/api/auth/github`;
+    return '/api/auth/github';
   },
 
   /**
    * Get the currently logged-in user's profile.
-   * Returns null if not logged in.
+   * Returns null if not logged in or token is expired.
    */
   getMe: async (): Promise<User | null> => {
     try {
-      const response = await apiClient.get<ApiResponse<User>>('/auth/me');
+      const response = await api.get<ApiResponse<User>>('/api/auth/me');
       return response.data.data ?? null;
     } catch {
       return null;
@@ -132,222 +66,302 @@ export const authApi = {
   },
 
   /**
-   * Log the user out by clearing their session.
+   * Log the user out by calling the backend and clearing local state.
    */
   logout: async (): Promise<void> => {
-    await apiClient.post('/auth/logout');
-    useAuthStore.getState().logout();
+    try {
+      await api.post('/api/auth/logout');
+    } finally {
+      useAuthStore.getState().logout();
+    }
   },
 
   /**
-   * Get the stored JWT token from the Zustand auth store.
+   * Get the stored JWT token from Zustand.
    */
   getToken: (): string | null => {
     return useAuthStore.getState().token;
   },
 };
 
-
 // =============================================================================
-// REPOSITORY API CALLS
+// REPOSITORY API
 // =============================================================================
-
 export const repositoryApi = {
   /**
-   * Get all repositories the user has added to Repo-Mind.
+   * Get all repositories the current user has indexed.
    */
   getRepositories: async (): Promise<Repository[]> => {
-    const response = await apiClient.get<ApiResponse<Repository[]>>('/repos');
+    const response = await api.get<ApiResponse<Repository[]>>('/api/repositories');
     return response.data.data ?? [];
   },
 
   /**
-   * Get a single repository by ID.
-   */
-  getRepository: async (repoId: string): Promise<Repository | null> => {
-    const response = await apiClient.get<ApiResponse<Repository>>(`/repos/${repoId}`);
-    return response.data.data ?? null;
-  },
-
-  /**
-   * Add a new repository to Repo-Mind by owner/name.
-   */
-  addRepository: async (owner: string, name: string): Promise<Repository> => {
-    const response = await apiClient.post<ApiResponse<Repository>>('/repos', {
-      owner,
-      name,
-    });
-    return response.data.data!;
-  },
-
-  /**
-   * Delete a repository from Repo-Mind.
+   * Delete a repository and all its associated data.
    */
   deleteRepository: async (repoId: string): Promise<void> => {
-    await apiClient.delete(`/repos/${repoId}`);
-  },
-
-  /**
-   * Search the user's GitHub repositories (not yet added to Repo-Mind).
-   * Used when the user wants to browse and add a new repo.
-   */
-  searchGithubRepos: async (query: string): Promise<GitHubRepository[]> => {
-    const response = await apiClient.get<ApiResponse<GitHubRepository[]>>(
-      `/repos/github/search?q=${encodeURIComponent(query)}`
-    );
-    return response.data.data ?? [];
+    await api.delete(`/api/repositories/${repoId}`);
   },
 };
 
-
 // =============================================================================
-// INDEXING API CALLS
+// INDEXING API
 // =============================================================================
-
 export const indexingApi = {
   /**
-   * Start the indexing pipeline for a repository.
-   * Returns an EventSource for SSE progress updates.
-   *
-   * SSE (Server-Sent Events) is a one-way stream from server to browser.
-   * Think of it like subscribing to live updates — the server pushes
-   * progress messages as it processes the repository.
+   * Start the indexing pipeline for a GitHub repository.
+   * Uses native fetch() for SSE streaming support.
    */
-  startIndexing: (repoId: string): EventSource => {
-    const token = useAuthStore.getState().token ?? '';
-    const url = `/api/repos/${repoId}/index?token=${token}`;
-    return new EventSource(url);
+  startIndexing: async (
+    repoUrl: string,
+    onProgress?: (event: IndexingProgress) => void
+  ): Promise<void> => {
+    const token = useAuthStore.getState().token;
+
+    const response = await fetch(`${API_BASE_URL}/api/indexing/start`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ repoUrl }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Indexing failed with status ${response.status}`);
+    }
+
+    if (!response.body) {
+      throw new Error('No response stream available');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let done = false;
+
+    while (!done) {
+      const { value, done: doneReading } = await reader.read();
+      done = doneReading;
+
+      if (value) {
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.substring(6).trim();
+            if (!dataStr) continue;
+
+            try {
+              const event: IndexingProgress = JSON.parse(dataStr);
+              if (onProgress) onProgress(event);
+            } catch {
+              // Skip malformed JSON lines
+            }
+          }
+        }
+      }
+    }
   },
 
   /**
    * Check the current indexing status of a repository.
    */
-  getIndexingStatus: async (repoId: string): Promise<IndexingProgress> => {
-    const response = await apiClient.get<ApiResponse<IndexingProgress>>(
-      `/repos/${repoId}/index/status`
-    );
-    return response.data.data!;
+  getIndexingStatus: async (repoId: string): Promise<IndexingProgress | null> => {
+    try {
+      const response = await api.get<ApiResponse<IndexingProgress>>(
+        `/api/indexing/status/${repoId}`
+      );
+      return response.data.data ?? null;
+    } catch {
+      return null;
+    }
   },
 };
 
-
 // =============================================================================
-// SEARCH API CALLS
+// SEARCH API
 // =============================================================================
-
 export const searchApi = {
   /**
-   * Perform a semantic search across the repository's codebase.
-   * Returns code chunks ranked by semantic similarity to the query.
+   * Perform a semantic (meaning-based) search across the repository.
    */
   semanticSearch: async (
     repoId: string,
     query: string,
     limit: number = 10
   ): Promise<SearchResponse> => {
-    const response = await apiClient.get<ApiResponse<SearchResponse>>(
-      `/search/${repoId}?q=${encodeURIComponent(query)}&limit=${limit}`
+    const response = await api.get<ApiResponse<SearchResponse>>(
+      `/api/search/${repoId}`,
+      { params: { q: query, limit } }
     );
     return response.data.data!;
   },
 
   /**
-   * Search for files and directories by name/path.
+   * Search for files and symbols by name.
    */
   fileSearch: async (
     repoId: string,
     query: string
   ): Promise<string[]> => {
-    const response = await apiClient.get<ApiResponse<string[]>>(
-      `/search/${repoId}/files?q=${encodeURIComponent(query)}`
+    const response = await api.get<ApiResponse<string[]>>(
+      `/api/search/${repoId}/files`,
+      { params: { q: query } }
     );
     return response.data.data ?? [];
   },
+
+  /**
+   * Get the full file tree with AST symbol metadata for a repository.
+   */
+  getRepositoryTree: async (
+    repoId: string
+  ): Promise<RepositoryTreeResponse> => {
+    const response = await api.get<ApiResponse<RepositoryTreeResponse>>(
+      `/api/search/${repoId}/tree`
+    );
+    return response.data.data!;
+  },
 };
 
-
 // =============================================================================
-// CHAT API CALLS
+// CHAT API
 // =============================================================================
-
 export const chatApi = {
   /**
-   * Start a streaming chat session with the repository.
-   * Returns an EventSource that streams AI response tokens word-by-word.
-   *
-   * This is how we achieve the "ChatGPT-like" streaming effect.
-   * Instead of waiting for the full response, words arrive one by one.
+   * Send a message to the AI chat and stream the response token-by-token.
    */
-  streamChat: (
+  streamChat: async (
     repoId: string,
     message: string,
-    conversationHistory: Array<{ role: string; content: string }>
-  ): EventSource => {
-    const token = useAuthStore.getState().token ?? '';
-    const params = new URLSearchParams({
-      message,
-      history: JSON.stringify(conversationHistory),
-      token,
+    onChunk: (content: string) => void,
+    onStatus?: (message: string) => void,
+    onError?: (error: string) => void
+  ): Promise<void> => {
+    const token = useAuthStore.getState().token;
+
+    const response = await fetch(`${API_BASE_URL}/api/chat/${repoId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ message }),
     });
-    return new EventSource(`/api/chat/${repoId}/stream?${params.toString()}`);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || `Chat failed with status ${response.status}`);
+    }
+
+    if (!response.body) {
+      throw new Error('No response stream available');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let done = false;
+    let currentEvent = '';
+
+    while (!done) {
+      const { value, done: doneReading } = await reader.read();
+      done = doneReading;
+
+      if (!value) continue;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.substring(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const dataStr = line.substring(6).trim();
+          if (!dataStr) continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+
+            if (currentEvent === 'chunk') {
+              onChunk(data.content);
+            } else if (currentEvent === 'status' && onStatus) {
+              onStatus(data.message);
+            } else if (currentEvent === 'error' && onError) {
+              onError(data.error);
+            }
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+    }
   },
 };
 
-
 // =============================================================================
-// ANALYSIS API CALLS
+// ANALYSIS API
 // =============================================================================
-
 export const analysisApi = {
   /**
-   * Generate an architecture summary for the repository.
-   * Returns a high-level overview with a Mermaid.js diagram.
+   * Get or generate an architecture summary for the repository.
    */
-  getArchitectureSummary: async (repoId: string): Promise<ArchitectureSummary> => {
-    const response = await apiClient.get<ApiResponse<ArchitectureSummary>>(
-      `/analyze/${repoId}/architecture`
+  getArchitectureSummary: async (
+    repoId: string,
+    forceRefresh: boolean = false
+  ): Promise<ArchitectureSummary> => {
+    const response = await api.get<ApiResponse<ArchitectureSummary>>(
+      `/api/analyze/${repoId}/architecture`,
+      { params: { refresh: forceRefresh } }
     );
     return response.data.data!;
   },
 
   /**
-   * Run AI-powered bug detection on the repository.
+   * Run AI-powered bug detection on the repository's code chunks.
    */
-  detectBugs: async (repoId: string): Promise<BugDetectionResult> => {
-    const response = await apiClient.post<ApiResponse<BugDetectionResult>>(
-      `/analyze/${repoId}/bugs`
+  detectBugs: async (
+    repoId: string,
+    forceRefresh: boolean = false
+  ): Promise<BugDetectionResult> => {
+    const response = await api.post<ApiResponse<BugDetectionResult>>(
+      `/api/analyze/${repoId}/bugs`,
+      {},
+      { params: { refresh: forceRefresh } }
     );
     return response.data.data!;
   },
 
   /**
-   * Generate documentation for the repository or a specific file.
+   * Generate technical documentation for the repository or a specific file.
+   * Supports forceRefresh parameter to bypass stale/empty cache entries.
    */
   generateDocumentation: async (
     repoId: string,
-    filePath?: string
+    filePath?: string,
+    forceRefresh: boolean = false
   ): Promise<DocumentationResult> => {
-    const response = await apiClient.post<ApiResponse<DocumentationResult>>(
-      `/analyze/${repoId}/docs`,
-      { filePath }
+    const response = await api.post<ApiResponse<DocumentationResult>>(
+      `/api/analyze/${repoId}/docs`,
+      { filePath },
+      { params: { refresh: forceRefresh } }
     );
     return response.data.data!;
   },
 
   /**
-   * Analyze the commit history and contributor activity.
+   * Analyze commit history, contributors, and development velocity.
    */
-  analyzeCommits: async (repoId: string): Promise<CommitAnalysis> => {
-    const response = await apiClient.get<ApiResponse<CommitAnalysis>>(
-      `/analyze/${repoId}/commits`
+  analyzeCommits: async (
+    repoId: string,
+    forceRefresh: boolean = false
+  ): Promise<CommitAnalysis> => {
+    const response = await api.get<ApiResponse<CommitAnalysis>>(
+      `/api/analyze/${repoId}/commits`,
+      { params: { refresh: forceRefresh } }
     );
     return response.data.data!;
   },
 };
 
-
-// =============================================================================
-// DEFAULT EXPORT
-// =============================================================================
-// Export the raw client too in case any service needs direct access
-export default apiClient;
+export default api;
