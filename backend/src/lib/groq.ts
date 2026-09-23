@@ -1,5 +1,5 @@
 // =============================================================================
-// GROQ AI CLIENT & COMPLETION SERVICE (WITH 429 BACKOFF & CLIENT-SIDE JSON EXTRACTION)
+// GROQ AI CLIENT & COMPLETION SERVICE (WITH 429 BACKOFF & HARDENED JSON PARSER)
 // =============================================================================
 // Unified interface to execute AI prompts using Groq's high-speed engine.
 // Bypasses brittle server-side JSON mode to prevent HTTP 400 json_validate_failed errors.
@@ -45,7 +45,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Generate a text completion from Groq.
- * Automatically retries up to 3 times on 429 rate limit errors with backoff.
+ * Automatically retries up to 3 times on 429 rate limit errors with exponential backoff.
  */
 export async function generateGroqCompletion(
   prompt: string,
@@ -75,13 +75,13 @@ export async function generateGroqCompletion(
       model,
       messages,
       temperature: options.temperature ?? 0.1,
-      max_tokens: options.maxTokens ?? 2500,
+      max_tokens: options.maxTokens ?? 3500,
     });
 
     const content = response.choices[0]?.message?.content || '';
     return content.trim();
-  } catch (error: any) {
-    const errorMsg = error?.message || String(error);
+  } catch (error: unknown) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
     const isRateLimit = errorMsg.includes('429') || errorMsg.toLowerCase().includes('rate limit');
 
     // 1. Handle 429 Rate Limits with exponential backoff
@@ -91,7 +91,7 @@ export async function generateGroqCompletion(
       const waitMs = Math.ceil(parsedWaitSec * 1000) + 1500;
 
       logger.warn(`⏳ [Groq] 429 Rate limit encountered (Attempt ${currentRetry + 1}/${MAX_RETRIES}). Pausing for ${(waitMs / 1000).toFixed(1)}s...`);
-      
+
       await delay(waitMs);
 
       return generateGroqCompletion(prompt, {
@@ -117,28 +117,42 @@ export async function generateGroqJSON<T>(
   prompt: string,
   options: GroqCompletionOptions = {}
 ): Promise<T> {
-  const jsonPrompt = `${prompt}\n\nCRITICAL: Respond ONLY with a valid JSON object starting with { and ending with }. Do NOT include any markdown formatting, text explanations, or code fences outside the JSON object.`;
+  const jsonPrompt = `${prompt}\n\nCRITICAL REQUIREMENTS:
+1. Respond ONLY with a valid JSON object starting with { and ending with }.
+2. Do NOT include any markdown code fences (such as \`\`\`json) or extra conversational text outside the JSON object.
+3. Ensure all property keys and strings are double-quoted valid JSON.`;
 
-  const rawText = await generateGroqCompletion(jsonPrompt, options);
+  const rawText = await generateGroqCompletion(jsonPrompt, {
+    ...options,
+    maxTokens: options.maxTokens ?? 3500,
+  });
+
+  // Pre-clean markdown code fences if model includes them
+  const cleanedText = rawText
+    .replace(/^```json\s*/i, '')
+    .replace(/^```md\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
 
   // Extract JSON string using robust regex matcher
-  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-  const jsonString = jsonMatch ? jsonMatch[0] : rawText;
+  const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+  const jsonString = jsonMatch ? jsonMatch[0] : cleanedText;
 
   try {
     return JSON.parse(jsonString) as T;
-  } catch (firstErr) {
-    // Light cleanup for common LLM JSON quirks (trailing commas, control characters)
-    const cleaned = jsonString
+  } catch {
+    // Structural cleanup for common LLM JSON quirks (trailing commas, control characters)
+    const sanitized = jsonString
       .replace(/,\s*([\]}])/g, '$1') // Remove trailing commas
       .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove unescaped control chars
       .trim();
 
     try {
-      return JSON.parse(cleaned) as T;
-    } catch (secondErr) {
+      return JSON.parse(sanitized) as T;
+    } catch {
       logger.error('❌ [Groq] Failed to parse JSON response:', {
-        rawSnippet: rawText.slice(0, 200),
+        rawSnippet: rawText.slice(0, 300),
       });
       throw new Error(`Failed to parse AI JSON response`);
     }

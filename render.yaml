@@ -16,7 +16,7 @@ services:
       - key: JWT_EXPIRES_IN
         value: 7d
       - key: GROQ_MODEL
-        value: openai/gpt-oss-20b
+        value: openai/gpt-oss-120b
       - key: PINECONE_INDEX_NAME
         value: repo-mind-index
       - key: REDIS_TTL
@@ -49,3 +49,4 @@ services:
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
+

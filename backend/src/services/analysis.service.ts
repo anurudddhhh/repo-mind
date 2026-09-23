@@ -1,5 +1,5 @@
 // =============================================================================
-// AI CODE ANALYSIS SERVICE (GROQ CLIENT-SIDE EXTRACTION HARDENED)
+// AI CODE ANALYSIS SERVICE (FILE-SPECIFIC MERMAID DIAGRAMS & HARDENED JSON)
 // =============================================================================
 
 import { AnalysisType } from '@prisma/client';
@@ -46,6 +46,9 @@ export interface DocumentationResult {
   generatedAt: string;
 }
 
+// Model selection helper
+const ANALYSIS_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+
 // Utility: Sanitize raw AST strings so quotes/braces don't break JSON parsing
 function sanitizeASTString(str: string): string {
   if (!str) return '';
@@ -64,8 +67,8 @@ export async function generateArchitectureSummary(
   repositoryId: string,
   forceRefresh: boolean = false
 ): Promise<ArchitectureSummary> {
-  // v7 cache key busts older fallback entries
-  const cacheKey = `analysis:${repositoryId}:architecture:v7`;
+  // v8 cache key busts older fallback/generic diagram entries
+  const cacheKey = `analysis:${repositoryId}:architecture:v8`;
 
   if (!forceRefresh) {
     const cached = await cacheGet<ArchitectureSummary>(cacheKey);
@@ -85,14 +88,19 @@ export async function generateArchitectureSummary(
 
     if (dbRecord && dbRecord.result) {
       const result = dbRecord.result as unknown as ArchitectureSummary;
-      if (result.overview && !result.overview.includes('multi-language application containing')) {
+      if (
+        result.overview &&
+        !result.overview.includes('multi-language application containing') &&
+        result.diagram &&
+        !result.diagram.includes('Client --> Server')
+      ) {
         await cacheSet(cacheKey, result, 86400);
         return result;
       }
     }
   }
 
-  logger.info('🏗️ [Analysis] Generating new architecture summary...', { repositoryId });
+  logger.info('🏗️ [Analysis] Generating new file-specific architecture summary...', { repositoryId });
 
   const repo = await prisma.repository.findUnique({
     where: { id: repositoryId },
@@ -135,16 +143,16 @@ export async function generateArchitectureSummary(
   }, {} as Record<string, { language: string; elements: string[]; dependencies: Set<string> }>);
 
   let contextPrompt = Object.entries(fileSummary)
-    .slice(0, 20)
+    .slice(0, 30)
     .map(([file, info]) => {
       return `File: ${file} (${info.language})
-  Elements: ${info.elements.slice(0, 4).join(', ')}
-  Imports: ${Array.from(info.dependencies).slice(0, 3).join(', ')}`;
+  Symbols: ${info.elements.slice(0, 5).join(', ')}
+  Imports/Deps: ${Array.from(info.dependencies).slice(0, 4).join(', ')}`;
     })
     .join('\n\n');
 
-  if (contextPrompt.length > 5000) {
-    contextPrompt = contextPrompt.slice(0, 5000) + '\n\n[AST context truncated]';
+  if (contextPrompt.length > 6000) {
+    contextPrompt = contextPrompt.slice(0, 6000) + '\n\n[AST context truncated]';
   }
 
   const prompt = `Analyze this codebase structure and return a comprehensive architectural summary in JSON format.
@@ -152,37 +160,49 @@ export async function generateArchitectureSummary(
 Repository Name: ${repo.fullName}
 Primary Language: ${repo.language || 'Unknown'}
 
-Codebase AST Structure:
+Parsed Codebase Files & AST Symbols:
 ${contextPrompt}
+
+CRITICAL MERMAID DIAGRAM INSTRUCTIONS:
+1. The "diagram" field MUST be a valid Mermaid.js flowchart (starting with "graph TD" or "flowchart TD").
+2. DO NOT output a generic diagram like "Client --> Server --> Database".
+3. Use ACTUAL file paths, modules, or services from the codebase list above as node labels (e.g. subgraphs for Frontend, Controllers, Services, and DB/APIs).
+4. ALWAYS enclose node labels in double quotes to prevent syntax errors (e.g., nodeA["src/controllers/auth.controller.ts"] --> nodeB["src/services/jwt.service.ts"]).
 
 Respond strictly with a JSON object matching this schema:
 {
-  "overview": "Detailed 2-paragraph executive summary of system architecture, main components, and data flow.",
+  "overview": "Detailed 2-paragraph executive summary of system architecture, key components, and data flow.",
   "techStack": ["Next.js", "Express", "TypeScript", "PostgreSQL", "Prisma"],
   "dependencies": ["express", "prisma", "react", "tailwindcss"],
   "modules": [
     {
       "name": "Auth Controller",
-      "path": "backend/src/controllers/auth.ts",
-      "description": "Handles OAuth authentication and JWT token issuance",
+      "path": "backend/src/controllers/auth.controller.ts",
+      "description": "Handles OAuth authentication and JWT token management",
       "exports": ["login", "verifyToken"]
     }
   ],
-  "diagram": "graph TD\\n  Client --> Server\\n  Server --> Database"
+  "diagram": "graph TD\\n  subgraph Controllers\\n    C1[\\"auth.controller.ts\\"]\\n    C2[\\"chat.controller.ts\\"]\\n  end\\n  subgraph Services\\n    S1[\\"chat.service.ts\\"]\\n  end\\n  C2 --> S1"
 }`;
 
   let result: ArchitectureSummary;
   try {
     result = await generateGroqJSON<ArchitectureSummary>(prompt, {
       systemPrompt:
-        'You are a Principal Software Architect. Provide deep, accurate, structured technical insights in valid JSON.',
+        'You are a Principal Software Architect. Analyze real codebase files and produce accurate, deep technical insights with file-specific Mermaid flowcharts in valid JSON format.',
       temperature: 0.1,
-      maxTokens: 2500,
+      maxTokens: 3500,
+      model: ANALYSIS_MODEL,
     });
   } catch (err) {
     logger.warn('⚠️ [Analysis] Groq JSON extraction failed, generating fallback architecture object...', {
       error: err instanceof Error ? err.message : String(err),
     });
+
+    const sampleFiles = Object.keys(fileSummary).slice(0, 4);
+    const fileA = sampleFiles[0] || 'src/index.ts';
+    const fileB = sampleFiles[1] || 'src/app.ts';
+    const fileC = sampleFiles[2] || 'src/services/api.ts';
 
     result = {
       overview: `Repository ${repo.fullName} is a full-stack application structured into modular frontend components, backend controller handlers, and data access layers. It contains ${Object.keys(fileSummary).length} parsed files across its source directories.`,
@@ -194,12 +214,12 @@ Respond strictly with a JSON object matching this schema:
         description: `Core source module located at ${path}`,
         exports: fileSummary[path].elements.slice(0, 3),
       })),
-      diagram: 'graph TD;\n  Client["Frontend Layer"] --> API["Backend API Layer"];\n  API --> DB[("Database Layer")];',
+      diagram: `graph TD;\n  subgraph App ["${repo.name} Modules"]\n    A["${fileA}"] --> B["${fileB}"];\n    B --> C["${fileC}"];\n  end;`,
     };
   }
 
   if (!result.diagram) {
-    result.diagram = 'graph TD;\n  App[Application] --> Core[Core Engine];';
+    result.diagram = 'graph TD;\n  App["Application Core"] --> Services["Service Layer"];';
   }
 
   await prisma.analysisResult.upsert({
@@ -237,7 +257,7 @@ export async function detectBugsInRepository(
   repositoryId: string,
   forceRefresh: boolean = false
 ): Promise<BugDetectionResult> {
-  const cacheKey = `analysis:${repositoryId}:bugs`;
+  const cacheKey = `analysis:${repositoryId}:bugs:v2`;
 
   if (!forceRefresh) {
     const cached = await cacheGet<BugDetectionResult>(cacheKey);
@@ -266,7 +286,7 @@ export async function detectBugsInRepository(
       repositoryId,
       chunkType: { in: ['FUNCTION', 'METHOD', 'COMPONENT', 'CLASS'] },
     },
-    take: 8,
+    take: 10,
     orderBy: { createdAt: 'desc' },
   });
 
@@ -281,12 +301,12 @@ export async function detectBugsInRepository(
   let codeSnippets = chunks
     .map(
       (c) =>
-        `// File: ${c.filePath} (Lines ${c.startLine}-${c.endLine})\n// ${c.chunkType}: ${c.name}\n${c.content.slice(0, 500)}`
+        `// File: ${c.filePath} (Lines ${c.startLine}-${c.endLine})\n// ${c.chunkType}: ${c.name}\n${c.content.slice(0, 600)}`
     )
     .join('\n\n--------------------\n\n');
 
-  if (codeSnippets.length > 4000) {
-    codeSnippets = codeSnippets.slice(0, 4000) + '\n\n[Snippets truncated]';
+  if (codeSnippets.length > 5000) {
+    codeSnippets = codeSnippets.slice(0, 5000) + '\n\n[Snippets truncated]';
   }
 
   const prompt = `Review the following code excerpts from the repository for bugs, logic flaws, memory leaks, unhandled exceptions, and security vulnerabilities.
@@ -305,7 +325,7 @@ Respond strictly in JSON matching this schema:
       "line": 42,
       "description": "Clear explanation of the bug or vulnerability",
       "suggestion": "How to fix the issue",
-      "codeSnippet": "Problematic line"
+      "codeSnippet": "Problematic line of code"
     }
   ]
 }`;
@@ -314,9 +334,10 @@ Respond strictly in JSON matching this schema:
   try {
     result = await generateGroqJSON<BugDetectionResult>(prompt, {
       systemPrompt:
-        'You are a Senior Security Auditor and Code Quality Reviewer. Identify only real, actionable issues supported by the provided code. Do not invent files or bugs.',
+        'You are a Senior Security Auditor and Code Quality Reviewer. Identify only real, actionable issues supported by the provided code snippets. Do not invent files or bugs.',
       temperature: 0.1,
-      maxTokens: 2000,
+      maxTokens: 3000,
+      model: ANALYSIS_MODEL,
     });
   } catch (err) {
     logger.warn('⚠️ [Analysis] Groq bug scan JSON failed, returning clean scan fallback...', {
@@ -552,7 +573,8 @@ ${codeContext}`;
     markdownDocs = await generateGroqCompletion(prompt, {
       systemPrompt,
       temperature: 0.1,
-      maxTokens: 2000,
+      maxTokens: 3000,
+      model: ANALYSIS_MODEL,
     });
   } catch (err) {
     logger.warn('⚠️ [Analysis] Groq completion failed for docs, generating structured fallback...', {
