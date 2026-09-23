@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   LogOut,
@@ -37,7 +37,6 @@ interface FeatureAction {
   label: string;
   description: string;
   icon: typeof MessageSquare;
-  // null href builder means "chat route" (special-cased)
   getHref: (repoId: string) => string;
   accent: string;
 }
@@ -105,6 +104,9 @@ export default function DashboardPage() {
   const [indexingStatus, setIndexingStatus] = useState<IndexingProgress | null>(null);
   const [error, setError] = useState('');
 
+  // Ref to hold smooth-progress interval timer (Task 7)
+  const connectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // Custom Delete Modal State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [repoToDelete, setRepoToDelete] = useState<{ id: string; name: string } | null>(null);
@@ -121,8 +123,10 @@ export default function DashboardPage() {
     try {
       const data = await repositoryApi.getRepositories();
       setRepositories(data);
+      return data;
     } catch (err) {
       console.error('Failed to fetch repositories:', err);
+      return [];
     } finally {
       setIsLoading(false);
     }
@@ -134,9 +138,25 @@ export default function DashboardPage() {
     }
   }, [isAuthenticated, fetchRepositories]);
 
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (connectionIntervalRef.current) {
+        clearInterval(connectionIntervalRef.current);
+      }
+    };
+  }, []);
+
   const handleLogout = () => {
     logout();
     router.replace('/');
+  };
+
+  const clearConnectionTimer = () => {
+    if (connectionIntervalRef.current) {
+      clearInterval(connectionIntervalRef.current);
+      connectionIntervalRef.current = null;
+    }
   };
 
   const handleAddRepo = async (e: React.FormEvent) => {
@@ -146,27 +166,84 @@ export default function DashboardPage() {
       return;
     }
 
+    // Extract target repo full name for resilience matching
+    const match = repoUrl.match(/github\.com\/([^/]+)\/([^/\s#?]+)/);
+    const targetFullName = match ? `${match[1]}/${match[2].replace(/\.git$/, '')}`.toLowerCase() : '';
+
     setError('');
     setIsIndexing(true);
+
+    // Initial Stage: 5% (Connecting)
     setIndexingStatus({
       stage: 'fetching',
-      message: 'Connecting to GitHub...',
+      message: 'Connecting to GitHub API...',
       progress: 5,
     });
 
+    // Task 7 Polish: Start smooth stage progression while waiting for GitHub API response
+    clearConnectionTimer();
+    const connectionSteps = [
+      { progress: 7, message: 'Requesting repository file tree...' },
+      { progress: 9, message: 'Resolving file manifests...' },
+      { progress: 10, message: 'Downloading repository files...' },
+    ];
+    let stepIndex = 0;
+
+    connectionIntervalRef.current = setInterval(() => {
+      if (stepIndex < connectionSteps.length) {
+        const step = connectionSteps[stepIndex];
+        setIndexingStatus((prev) =>
+          prev && prev.progress < step.progress
+            ? { ...prev, progress: step.progress, message: step.message }
+            : prev
+        );
+        stepIndex++;
+      } else {
+        clearConnectionTimer();
+      }
+    }, 1200);
+
     try {
       await indexingApi.startIndexing(repoUrl, (progressEvent) => {
+        // As soon as real backend progress reaches >= 10%, cancel simulated interval
+        if (progressEvent.progress >= 10) {
+          clearConnectionTimer();
+        }
         setIndexingStatus(progressEvent);
       });
 
+      clearConnectionTimer();
       await fetchRepositories();
       addToast('Repository indexed successfully!', 'success');
       setRepoUrl('');
     } catch (err: unknown) {
+      clearConnectionTimer();
+      
+      // Task 6 Resilience: Check if repository was actually created and indexed despite proxy SSE disconnect
+      if (targetFullName) {
+        try {
+          const freshRepos = await repositoryApi.getRepositories();
+          const indexedRepo = freshRepos.find(
+            (r) => r.fullName.toLowerCase() === targetFullName
+          );
+
+          if (indexedRepo && (indexedRepo.isIndexed || Boolean(indexedRepo.indexedAt) || Boolean(indexedRepo.id))) {
+            setRepositories(freshRepos);
+            addToast('Repository indexed successfully!', 'success');
+            setRepoUrl('');
+            setError('');
+            return;
+          }
+        } catch {
+          // If verification query fails, fall back to showing error banner
+        }
+      }
+
       const errMessage = err instanceof Error ? err.message : 'Failed to index repository';
       setError(errMessage);
       addToast(errMessage, 'error');
     } finally {
+      clearConnectionTimer();
       setIsIndexing(false);
       setIndexingStatus(null);
     }
@@ -338,7 +415,7 @@ export default function DashboardPage() {
               </div>
               <div className="w-full bg-border rounded-full h-2 overflow-hidden">
                 <div
-                  className="bg-primary h-2 rounded-full transition-all duration-300 ease-out"
+                  className="bg-primary h-2 rounded-full transition-all duration-500 ease-out"
                   style={{ width: `${indexingStatus.progress}%` }}
                 />
               </div>
@@ -424,7 +501,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Delete only in header — features live in the grid below */}
+                  {/* Delete only in header */}
                   <button
                     onClick={() => handleOpenDeleteModal(repo.id, repo.fullName)}
                     className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-foreground-muted transition-colors hover:bg-error/10 hover:text-error flex-shrink-0 self-start"

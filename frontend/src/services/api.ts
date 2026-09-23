@@ -1,5 +1,5 @@
 // =============================================================================
-// REPO-MIND FRONTEND — UNIFIED API SERVICE LAYER
+// REPO-MIND FRONTEND — UNIFIED API SERVICE LAYER (BUFFER-RESILIENT)
 // =============================================================================
 // This is the SINGLE source of truth for all backend communication.
 // NO component should ever call fetch() or axios directly (except for SSE
@@ -110,7 +110,7 @@ export const repositoryApi = {
 export const indexingApi = {
   /**
    * Start the indexing pipeline for a GitHub repository.
-   * Uses native fetch() for SSE streaming support with socket closure resilience.
+   * Uses native fetch() for SSE streaming support with buffer assembly & socket closure resilience.
    */
   startIndexing: async (
     repoUrl: string,
@@ -140,6 +140,7 @@ export const indexingApi = {
     const decoder = new TextDecoder();
     let done = false;
     let isCompleted = false;
+    let buffer = '';
 
     try {
       while (!done) {
@@ -147,30 +148,42 @@ export const indexingApi = {
         done = doneReading;
 
         if (value) {
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split('\n');
+          // Append new bytes to our stream parsing buffer
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Split complete lines; extract and hold onto any trailing incomplete line fragment
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const dataStr = line.substring(6).trim();
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            if (trimmed.startsWith('data: ')) {
+              const dataStr = trimmed.substring(6).trim();
               if (!dataStr) continue;
 
               try {
                 const event: IndexingProgress = JSON.parse(dataStr);
 
+                // Set flags to safely suppress downstream proxy socket disconnect exceptions
                 if (event.stage === 'complete' || event.progress === 100) {
                   isCompleted = true;
                 }
 
-                if (onProgress) onProgress(event);
+                if (onProgress) {
+                  onProgress(event);
+                }
               } catch {
-                // Skip malformed JSON lines
+                // Skip malformed lines
               }
             }
           }
         }
       }
     } catch (err) {
-      // If completion event was already received, ignore trailing network socket closure errors
+      // If we received the completed event before the connection dropped,
+      // we gracefully return instead of bubbling a red herring connection error.
       if (isCompleted) {
         return;
       }
@@ -245,6 +258,7 @@ export const searchApi = {
 export const chatApi = {
   /**
    * Send a message to the AI chat and stream the response token-by-token.
+   * Utilizes line-buffering to prevent token drops due to network TCP packet splits.
    */
   streamChat: async (
     repoId: string,
@@ -277,35 +291,42 @@ export const chatApi = {
     const decoder = new TextDecoder();
     let done = false;
     let currentEvent = '';
+    let buffer = '';
 
     while (!done) {
       const { value, done: doneReading } = await reader.read();
       done = doneReading;
 
-      if (!value) continue;
+      if (value) {
+        // Feed chunk into parser buffer
+        buffer += decoder.decode(value, { stream: true });
+        
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep trailing incomplete token fragment
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
 
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.substring(7).trim();
-        } else if (line.startsWith('data: ')) {
-          const dataStr = line.substring(6).trim();
-          if (!dataStr) continue;
+          if (trimmed.startsWith('event: ')) {
+            currentEvent = trimmed.substring(7).trim();
+          } else if (trimmed.startsWith('data: ')) {
+            const dataStr = trimmed.substring(6).trim();
+            if (!dataStr) continue;
 
-          try {
-            const data = JSON.parse(dataStr);
+            try {
+              const data = JSON.parse(dataStr);
 
-            if (currentEvent === 'chunk') {
-              onChunk(data.content);
-            } else if (currentEvent === 'status' && onStatus) {
-              onStatus(data.message);
-            } else if (currentEvent === 'error' && onError) {
-              onError(data.error);
+              if (currentEvent === 'chunk') {
+                onChunk(data.content);
+              } else if (currentEvent === 'status' && onStatus) {
+                onStatus(data.message);
+              } else if (currentEvent === 'error' && onError) {
+                onError(data.error);
+              }
+            } catch {
+              // Ignore malformed or truncated JSON lines safely
             }
-          } catch {
-            // Skip malformed JSON
           }
         }
       }
