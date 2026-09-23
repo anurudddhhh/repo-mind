@@ -110,7 +110,7 @@ export const repositoryApi = {
 export const indexingApi = {
   /**
    * Start the indexing pipeline for a GitHub repository.
-   * Uses native fetch() for SSE streaming support.
+   * Uses native fetch() for SSE streaming support with socket closure resilience.
    */
   startIndexing: async (
     repoUrl: string,
@@ -139,28 +139,42 @@ export const indexingApi = {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let done = false;
+    let isCompleted = false;
 
-    while (!done) {
-      const { value, done: doneReading } = await reader.read();
-      done = doneReading;
+    try {
+      while (!done) {
+        const { value, done: doneReading } = await reader.read();
+        done = doneReading;
 
-      if (value) {
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.substring(6).trim();
-            if (!dataStr) continue;
+        if (value) {
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.substring(6).trim();
+              if (!dataStr) continue;
 
-            try {
-              const event: IndexingProgress = JSON.parse(dataStr);
-              if (onProgress) onProgress(event);
-            } catch {
-              // Skip malformed JSON lines
+              try {
+                const event: IndexingProgress = JSON.parse(dataStr);
+
+                if (event.stage === 'complete' || event.progress === 100) {
+                  isCompleted = true;
+                }
+
+                if (onProgress) onProgress(event);
+              } catch {
+                // Skip malformed JSON lines
+              }
             }
           }
         }
       }
+    } catch (err) {
+      // If completion event was already received, ignore trailing network socket closure errors
+      if (isCompleted) {
+        return;
+      }
+      throw err;
     }
   },
 
