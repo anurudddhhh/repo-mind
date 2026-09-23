@@ -218,24 +218,34 @@ export default function DashboardPage() {
       setRepoUrl('');
     } catch (err: unknown) {
       clearConnectionTimer();
-      
-      // Task 6 Resilience: Check if repository was actually created and indexed despite proxy SSE disconnect
-      if (targetFullName) {
-        try {
-          const freshRepos = await repositoryApi.getRepositories();
-          const indexedRepo = freshRepos.find(
-            (r) => r.fullName.toLowerCase() === targetFullName
-          );
 
-          if (indexedRepo && (indexedRepo.isIndexed || Boolean(indexedRepo.indexedAt) || Boolean(indexedRepo.id))) {
-            setRepositories(freshRepos);
-            addToast('Repository indexed successfully!', 'success');
-            setRepoUrl('');
-            setError('');
-            return;
+      // Task 6 Multi-Attempt Resilience Loop:
+      // If stream socket disconnected mid-indexing, poll Neon DB up to 4 times (12s total)
+      if (targetFullName) {
+        setIndexingStatus({
+          stage: 'storing',
+          message: 'Finalizing database indexing state...',
+          progress: 95,
+        });
+
+        for (let attempt = 1; attempt <= 4; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          try {
+            const freshRepos = await repositoryApi.getRepositories();
+            const indexedRepo = freshRepos.find(
+              (r) => r.fullName.toLowerCase() === targetFullName
+            );
+
+            if (indexedRepo && (indexedRepo.isIndexed || Boolean(indexedRepo.indexedAt) || Boolean(indexedRepo.id))) {
+              setRepositories(freshRepos);
+              addToast('Repository indexed successfully!', 'success');
+              setRepoUrl('');
+              setError('');
+              return;
+            }
+          } catch {
+            // Ignore temporary polling network glitches during retry attempts
           }
-        } catch {
-          // If verification query fails, fall back to showing error banner
         }
       }
 

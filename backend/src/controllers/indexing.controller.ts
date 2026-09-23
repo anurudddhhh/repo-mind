@@ -1,7 +1,7 @@
 // Indexing Controller
 // Orchestrates the full repo indexing pipeline:
 // GitHub fetch → Filter binaries → AST semantic chunk → Save to Postgres → embed → store in Pinecone
-// Streams progress to the client via SSE with guaranteed database state updates.
+// Streams progress to the client via SSE with guaranteed database state updates and HTTP keep-alive heartbeat.
 
 import type { Request, Response } from 'express';
 import '../types';
@@ -47,13 +47,21 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
   const [, owner, repoName] = match;
   const cleanRepoName = repoName.replace(/\.git$/, '');
 
-  // --- Set up SSE ---
+  // --- Set up SSE Headers ---
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+
+  // --- Send periodic SSE keep-alive heartbeat every 5 seconds ---
+  // Prevents Cloudflare / Render proxies from closing idle TCP sockets during long AI embeddings
+  const keepAliveInterval = setInterval(() => {
+    if (!res.writableEnded) {
+      res.write(': keepalive\n\n');
+    }
+  }, 5000);
 
   const sendEvent = (data: {
     stage: string;
@@ -62,7 +70,9 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     filesProcessed?: number;
     totalFiles?: number;
   }) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
   };
 
   let repositoryId: string | null = null;
@@ -142,7 +152,6 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
         data: { indexingStatus: IndexingStatus.COMPLETED, lastIndexedAt: new Date() },
       });
       sendEvent({ stage: 'complete', message: 'No indexable code files found', progress: 100 });
-      res.end();
       return;
     }
 
@@ -199,7 +208,7 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     let storedCount = 0;
     try {
       storedCount = await embedAndStoreChunks(chunks, (processed, total) => {
-        const embeddingProgress = 60 + Math.round((processed / total) * 30);
+        const embeddingProgress = 60 + Math.round((processed / total) * 35);
         sendEvent({
           stage: 'embedding',
           message: `Embedded ${processed}/${total} chunks`,
@@ -215,7 +224,7 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     }
 
     // --- Stage 6: Complete job ---
-    sendEvent({ stage: 'storing', message: 'Finalizing...', progress: 95 });
+    sendEvent({ stage: 'storing', message: 'Finalizing...', progress: 98 });
 
     await prisma.indexingJob.update({
       where: { id: job.id },
@@ -240,8 +249,6 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
       chunks: chunks.length,
       vectors: storedCount,
     });
-
-    res.end();
   } catch (error) {
     logger.error('❌ [Indexing] Pipeline failed', {
       error: error instanceof Error ? error.message : String(error),
@@ -260,8 +267,11 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
       message: error instanceof Error ? error.message : 'Indexing failed',
       progress: 0,
     });
-
-    res.end();
+  } finally {
+    clearInterval(keepAliveInterval);
+    if (!res.writableEnded) {
+      res.end();
+    }
   }
 }
 
