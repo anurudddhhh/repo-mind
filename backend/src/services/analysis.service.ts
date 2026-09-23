@@ -1,5 +1,5 @@
 // =============================================================================
-// AI CODE ANALYSIS SERVICE (FILE-SPECIFIC MERMAID DIAGRAMS & HIGH TOKEN BUDGET)
+// AI CODE ANALYSIS SERVICE (CLEAN HIGH-LEVEL MERMAID DIAGRAMS & BUG ANALYSIS)
 // =============================================================================
 
 import { AnalysisType } from '@prisma/client';
@@ -80,8 +80,8 @@ export async function generateArchitectureSummary(
   repositoryId: string,
   forceRefresh: boolean = false
 ): Promise<ArchitectureSummary> {
-  // v10 cache key busts older fallback entries
-  const cacheKey = `analysis:${repositoryId}:architecture:v10`;
+  // v11 cache key busts older web/file-path diagram entries
+  const cacheKey = `analysis:${repositoryId}:architecture:v11`;
 
   if (!forceRefresh) {
     const cached = await cacheGet<ArchitectureSummary>(cacheKey);
@@ -105,7 +105,7 @@ export async function generateArchitectureSummary(
         result.overview &&
         !result.overview.includes('multi-language application containing') &&
         result.diagram &&
-        !result.diagram.includes('README.md')
+        !result.diagram.includes('routes/auth.routes.ts')
       ) {
         await cacheSet(cacheKey, result, 86400);
         return result;
@@ -113,7 +113,7 @@ export async function generateArchitectureSummary(
     }
   }
 
-  logger.info('🏗️ [Analysis] Generating new file-specific architecture summary...', { repositoryId });
+  logger.info('🏗️ [Analysis] Generating new high-level architecture summary...', { repositoryId });
 
   const repo = await prisma.repository.findUnique({
     where: { id: repositoryId },
@@ -171,7 +171,7 @@ export async function generateArchitectureSummary(
     contextPrompt = contextPrompt.slice(0, 4000) + '\n\n[AST context truncated]';
   }
 
-  const prompt = `Analyze this codebase structure and return a detailed architectural summary in JSON format.
+  const prompt = `Analyze this codebase structure and return a clean, executive architectural summary in JSON format.
 
 Repository Name: ${repo.fullName}
 Primary Language: ${repo.language || 'Unknown'}
@@ -179,63 +179,59 @@ Primary Language: ${repo.language || 'Unknown'}
 Core Application Files & AST Symbols:
 ${contextPrompt}
 
-CRITICAL RULES FOR RESPONSE:
-1. "overview" MUST be a detailed 2-paragraph executive overview (~150-200 words) describing system design, module responsibilities, and data flow.
-2. "modules" list top 4-5 key application modules with real file paths and descriptions.
-3. "diagram" MUST be a valid, highly detailed Mermaid.js flowchart (starting with "graph TD") using ACTUAL file paths or modules from the list above.
-4. Always double-quote node labels (e.g. nodeA["backend/src/controllers/auth.ts"] --> nodeB["backend/src/services/jwt.ts"]).
+DIAGRAM DESIGN RULES (CRITICAL):
+1. Keep the diagram clean, elegant, and readable. Limit to MAXIMUM 6 to 8 nodes total.
+2. DO NOT output raw file paths (e.g. DO NOT write "backend/src/routes/auth.routes.ts").
+3. Group code into clear, high-level functional components (e.g., "Frontend Web App", "Express API Gateway", "Auth & Passport Module", "AST Indexing Engine", "Vector Store (Pinecone)", "PostgreSQL Database").
+4. Include clean arrow labels showing relationship actions (e.g. A["Frontend UI"] -->|HTTP / REST| B["Express API"]).
+5. Always double-quote node labels (e.g. A["Web Client"] --> B["API Gateway"]).
 
 Respond strictly with a JSON object matching this schema:
 {
-  "overview": "Detailed 2-paragraph executive summary of system architecture, key components, and data flow.",
+  "overview": "Detailed 2-paragraph executive overview describing overall system architecture, component relationships, and primary data flow.",
   "techStack": ["Next.js", "Express", "TypeScript", "PostgreSQL", "Prisma"],
   "dependencies": ["express", "prisma", "react", "tailwindcss"],
   "modules": [
     {
-      "name": "Auth Module",
+      "name": "Auth & Session Module",
       "path": "backend/src/controllers/auth.controller.ts",
-      "description": "Handles OAuth authentication, session validation, and JWT token lifecycle",
+      "description": "Handles GitHub OAuth 2.0 flow, session cookies, and JWT token issuance",
       "exports": ["login", "logout", "getMe"]
     }
   ],
-  "diagram": "graph TD\\n  subgraph Controllers\\n    C1[\\"auth.controller.ts\\"]\\n    C2[\\"chat.controller.ts\\"]\\n  end\\n  subgraph Services\\n    S1[\\"chat.service.ts\\"]\\n  end\\n  C2 --> S1"
+  "diagram": "graph TD\\n  Client[\\"Frontend Web Client\\"] -->|HTTP / REST| API[\\"Express API Server\\"]\\n  API -->|Auth & OAuth| Auth[\\"Passport Auth Handler\\"]\\n  API -->|AST Parsing| AST[\\"Tree-Sitter Engine\\"]\\n  AST -->|Store Vectors| Vector[\\"Pinecone Vector DB\\"]\\n  API -->|Metadata Queries| DB[(\\"Neon PostgreSQL Database\\")]"
 }`;
 
   let result: ArchitectureSummary;
   try {
     result = await generateGroqJSON<ArchitectureSummary>(prompt, {
       systemPrompt:
-        'You are a Principal Software Architect. Provide thorough, structured technical insights with file-specific Mermaid flowcharts in valid JSON format.',
+        'You are a Principal Software Architect. Produce clean, executive-level technical architecture summaries with high-level Mermaid flowcharts in valid JSON format.',
       temperature: 0.1,
-      maxTokens: 3500, // Expanded token budget for 120B model
+      maxTokens: 3500,
       model: ANALYSIS_MODEL,
     });
   } catch (err) {
-    logger.warn('⚠️ [Analysis] Groq JSON extraction failed, generating fallback architecture object...', {
+    logger.warn('⚠️ [Analysis] Groq JSON extraction failed, generating clean fallback architecture object...', {
       error: err instanceof Error ? err.message : String(err),
     });
 
-    const sampleFiles = Object.keys(fileSummary).slice(0, 3);
-    const fileA = sampleFiles[0] || 'src/app.ts';
-    const fileB = sampleFiles[1] || 'src/controllers/api.ts';
-    const fileC = sampleFiles[2] || 'src/services/db.ts';
-
     result = {
-      overview: `Repository ${repo.fullName} is a full-stack application structured into modular frontend components, backend controllers, and data access services. It contains ${Object.keys(fileSummary).length} parsed core source files.`,
+      overview: `Repository ${repo.fullName} is a full-stack application structured into modular frontend client views, Express API controller endpoints, and persistence layers across PostgreSQL and vector databases. It contains ${Object.keys(fileSummary).length} parsed source files.`,
       techStack: Array.from(new Set(repo.codeChunks.map((c) => c.language).filter(Boolean))).slice(0, 6),
       dependencies: ['express', 'prisma', 'react', 'next'],
       modules: Object.keys(fileSummary).slice(0, 4).map((path) => ({
         name: path.split('/').pop() || path,
         path,
-        description: `Source module located at ${path}`,
+        description: `Core module located at ${path}`,
         exports: fileSummary[path].elements.slice(0, 3),
       })),
-      diagram: `graph TD;\n  subgraph Core ["${repo.name} Modules"]\n    A["${fileA}"] --> B["${fileB}"];\n    B --> C["${fileC}"];\n  end;`,
+      diagram: `graph TD;\n  Client["Frontend Client (Next.js)"] -->|API Calls| API["Express API Gateway"];\n  API -->|Data Storage| DB[("Neon PostgreSQL DB")];\n  API -->|Semantic Vectors| Vector["Pinecone Vector Store"];`,
     };
   }
 
   if (!result.diagram) {
-    result.diagram = 'graph TD;\n  App["Application Core"] --> Services["Service Layer"];';
+    result.diagram = 'graph TD;\n  App["Frontend Web Client"] --> API["Express Backend API"];\n  API --> DB[("Database")];';
   }
 
   await prisma.analysisResult.upsert({
@@ -261,7 +257,7 @@ Respond strictly with a JSON object matching this schema:
 
   await cacheSet(cacheKey, result, 86400);
 
-  logger.info('✅ [Analysis] Architecture summary generated & cached', { repositoryId });
+  logger.info('✅ [Analysis] High-level architecture summary generated & cached', { repositoryId });
   return result;
 }
 
@@ -352,7 +348,7 @@ Respond strictly in JSON matching this schema:
       systemPrompt:
         'You are a Senior Security Auditor and Code Quality Reviewer. Identify only real, actionable issues supported by the provided code snippets. Do not invent files or bugs.',
       temperature: 0.1,
-      maxTokens: 3500, // Expanded token budget for 120B model
+      maxTokens: 3500,
       model: ANALYSIS_MODEL,
     });
   } catch (err) {
@@ -589,7 +585,7 @@ ${codeContext}`;
     markdownDocs = await generateGroqCompletion(prompt, {
       systemPrompt,
       temperature: 0.1,
-      maxTokens: 3500, // Expanded token budget for 120B model
+      maxTokens: 3500,
       model: ANALYSIS_MODEL,
     });
   } catch (err) {
