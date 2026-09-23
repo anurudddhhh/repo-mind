@@ -1,5 +1,5 @@
 // =============================================================================
-// AI CODE ANALYSIS SERVICE (FILE-SPECIFIC MERMAID DIAGRAMS & HARDENED JSON)
+// AI CODE ANALYSIS SERVICE (FILE-SPECIFIC MERMAID DIAGRAMS & HIGH TOKEN BUDGET)
 // =============================================================================
 
 import { AnalysisType } from '@prisma/client';
@@ -59,6 +59,19 @@ function sanitizeASTString(str: string): string {
     .trim();
 }
 
+// Helper: Filter out non-essential source files (configs, docs, env loaders)
+function isCoreSourceFile(filePath: string): boolean {
+  const lower = filePath.toLowerCase();
+  const isCode = /\.(ts|tsx|js|jsx|py|go|java|rs)$/.test(lower);
+  const isIgnored =
+    lower.includes('readme') ||
+    lower.includes('env') ||
+    lower.includes('config') ||
+    lower.includes('.d.ts') ||
+    lower.includes('gitkeep');
+  return isCode && !isIgnored;
+}
+
 // =============================================================================
 // FEATURE 05: ARCHITECTURE SUMMARY GENERATION
 // =============================================================================
@@ -67,8 +80,8 @@ export async function generateArchitectureSummary(
   repositoryId: string,
   forceRefresh: boolean = false
 ): Promise<ArchitectureSummary> {
-  // v8 cache key busts older fallback/generic diagram entries
-  const cacheKey = `analysis:${repositoryId}:architecture:v8`;
+  // v10 cache key busts older fallback entries
+  const cacheKey = `analysis:${repositoryId}:architecture:v10`;
 
   if (!forceRefresh) {
     const cached = await cacheGet<ArchitectureSummary>(cacheKey);
@@ -92,7 +105,7 @@ export async function generateArchitectureSummary(
         result.overview &&
         !result.overview.includes('multi-language application containing') &&
         result.diagram &&
-        !result.diagram.includes('Client --> Server')
+        !result.diagram.includes('README.md')
       ) {
         await cacheSet(cacheKey, result, 86400);
         return result;
@@ -121,7 +134,11 @@ export async function generateArchitectureSummary(
     throw new Error('Repository not found');
   }
 
-  const fileSummary = repo.codeChunks.reduce((acc, chunk) => {
+  // Filter for core source files only
+  const sourceChunks = repo.codeChunks.filter((c) => isCoreSourceFile(c.filePath));
+  const activeChunks = sourceChunks.length > 0 ? sourceChunks : repo.codeChunks;
+
+  const fileSummary = activeChunks.reduce((acc, chunk) => {
     if (!acc[chunk.filePath]) {
       acc[chunk.filePath] = {
         language: chunk.language,
@@ -129,7 +146,7 @@ export async function generateArchitectureSummary(
         dependencies: new Set<string>(),
       };
     }
-    const safeName = sanitizeASTString(chunk.name).slice(0, 50);
+    const safeName = sanitizeASTString(chunk.name).slice(0, 40);
     if (safeName) {
       acc[chunk.filePath].elements.push(`${chunk.chunkType}: ${safeName}`);
     }
@@ -143,31 +160,30 @@ export async function generateArchitectureSummary(
   }, {} as Record<string, { language: string; elements: string[]; dependencies: Set<string> }>);
 
   let contextPrompt = Object.entries(fileSummary)
-    .slice(0, 30)
+    .slice(0, 25)
     .map(([file, info]) => {
-      return `File: ${file} (${info.language})
-  Symbols: ${info.elements.slice(0, 5).join(', ')}
-  Imports/Deps: ${Array.from(info.dependencies).slice(0, 4).join(', ')}`;
+      return `File: ${file}
+  Symbols: ${info.elements.slice(0, 5).join(', ')}`;
     })
     .join('\n\n');
 
-  if (contextPrompt.length > 6000) {
-    contextPrompt = contextPrompt.slice(0, 6000) + '\n\n[AST context truncated]';
+  if (contextPrompt.length > 4000) {
+    contextPrompt = contextPrompt.slice(0, 4000) + '\n\n[AST context truncated]';
   }
 
-  const prompt = `Analyze this codebase structure and return a comprehensive architectural summary in JSON format.
+  const prompt = `Analyze this codebase structure and return a detailed architectural summary in JSON format.
 
 Repository Name: ${repo.fullName}
 Primary Language: ${repo.language || 'Unknown'}
 
-Parsed Codebase Files & AST Symbols:
+Core Application Files & AST Symbols:
 ${contextPrompt}
 
-CRITICAL MERMAID DIAGRAM INSTRUCTIONS:
-1. The "diagram" field MUST be a valid Mermaid.js flowchart (starting with "graph TD" or "flowchart TD").
-2. DO NOT output a generic diagram like "Client --> Server --> Database".
-3. Use ACTUAL file paths, modules, or services from the codebase list above as node labels (e.g. subgraphs for Frontend, Controllers, Services, and DB/APIs).
-4. ALWAYS enclose node labels in double quotes to prevent syntax errors (e.g., nodeA["src/controllers/auth.controller.ts"] --> nodeB["src/services/jwt.service.ts"]).
+CRITICAL RULES FOR RESPONSE:
+1. "overview" MUST be a detailed 2-paragraph executive overview (~150-200 words) describing system design, module responsibilities, and data flow.
+2. "modules" list top 4-5 key application modules with real file paths and descriptions.
+3. "diagram" MUST be a valid, highly detailed Mermaid.js flowchart (starting with "graph TD") using ACTUAL file paths or modules from the list above.
+4. Always double-quote node labels (e.g. nodeA["backend/src/controllers/auth.ts"] --> nodeB["backend/src/services/jwt.ts"]).
 
 Respond strictly with a JSON object matching this schema:
 {
@@ -176,10 +192,10 @@ Respond strictly with a JSON object matching this schema:
   "dependencies": ["express", "prisma", "react", "tailwindcss"],
   "modules": [
     {
-      "name": "Auth Controller",
+      "name": "Auth Module",
       "path": "backend/src/controllers/auth.controller.ts",
-      "description": "Handles OAuth authentication and JWT token management",
-      "exports": ["login", "verifyToken"]
+      "description": "Handles OAuth authentication, session validation, and JWT token lifecycle",
+      "exports": ["login", "logout", "getMe"]
     }
   ],
   "diagram": "graph TD\\n  subgraph Controllers\\n    C1[\\"auth.controller.ts\\"]\\n    C2[\\"chat.controller.ts\\"]\\n  end\\n  subgraph Services\\n    S1[\\"chat.service.ts\\"]\\n  end\\n  C2 --> S1"
@@ -189,9 +205,9 @@ Respond strictly with a JSON object matching this schema:
   try {
     result = await generateGroqJSON<ArchitectureSummary>(prompt, {
       systemPrompt:
-        'You are a Principal Software Architect. Analyze real codebase files and produce accurate, deep technical insights with file-specific Mermaid flowcharts in valid JSON format.',
+        'You are a Principal Software Architect. Provide thorough, structured technical insights with file-specific Mermaid flowcharts in valid JSON format.',
       temperature: 0.1,
-      maxTokens: 3500,
+      maxTokens: 3500, // Expanded token budget for 120B model
       model: ANALYSIS_MODEL,
     });
   } catch (err) {
@@ -199,22 +215,22 @@ Respond strictly with a JSON object matching this schema:
       error: err instanceof Error ? err.message : String(err),
     });
 
-    const sampleFiles = Object.keys(fileSummary).slice(0, 4);
-    const fileA = sampleFiles[0] || 'src/index.ts';
-    const fileB = sampleFiles[1] || 'src/app.ts';
-    const fileC = sampleFiles[2] || 'src/services/api.ts';
+    const sampleFiles = Object.keys(fileSummary).slice(0, 3);
+    const fileA = sampleFiles[0] || 'src/app.ts';
+    const fileB = sampleFiles[1] || 'src/controllers/api.ts';
+    const fileC = sampleFiles[2] || 'src/services/db.ts';
 
     result = {
-      overview: `Repository ${repo.fullName} is a full-stack application structured into modular frontend components, backend controller handlers, and data access layers. It contains ${Object.keys(fileSummary).length} parsed files across its source directories.`,
+      overview: `Repository ${repo.fullName} is a full-stack application structured into modular frontend components, backend controllers, and data access services. It contains ${Object.keys(fileSummary).length} parsed core source files.`,
       techStack: Array.from(new Set(repo.codeChunks.map((c) => c.language).filter(Boolean))).slice(0, 6),
       dependencies: ['express', 'prisma', 'react', 'next'],
-      modules: Object.keys(fileSummary).slice(0, 5).map((path) => ({
+      modules: Object.keys(fileSummary).slice(0, 4).map((path) => ({
         name: path.split('/').pop() || path,
         path,
-        description: `Core source module located at ${path}`,
+        description: `Source module located at ${path}`,
         exports: fileSummary[path].elements.slice(0, 3),
       })),
-      diagram: `graph TD;\n  subgraph App ["${repo.name} Modules"]\n    A["${fileA}"] --> B["${fileB}"];\n    B --> C["${fileC}"];\n  end;`,
+      diagram: `graph TD;\n  subgraph Core ["${repo.name} Modules"]\n    A["${fileA}"] --> B["${fileB}"];\n    B --> C["${fileC}"];\n  end;`,
     };
   }
 
@@ -257,7 +273,7 @@ export async function detectBugsInRepository(
   repositoryId: string,
   forceRefresh: boolean = false
 ): Promise<BugDetectionResult> {
-  const cacheKey = `analysis:${repositoryId}:bugs:v2`;
+  const cacheKey = `analysis:${repositoryId}:bugs:v3`;
 
   if (!forceRefresh) {
     const cached = await cacheGet<BugDetectionResult>(cacheKey);
@@ -301,12 +317,12 @@ export async function detectBugsInRepository(
   let codeSnippets = chunks
     .map(
       (c) =>
-        `// File: ${c.filePath} (Lines ${c.startLine}-${c.endLine})\n// ${c.chunkType}: ${c.name}\n${c.content.slice(0, 600)}`
+        `// File: ${c.filePath} (Lines ${c.startLine}-${c.endLine})\n// ${c.chunkType}: ${c.name}\n${c.content.slice(0, 500)}`
     )
     .join('\n\n--------------------\n\n');
 
-  if (codeSnippets.length > 5000) {
-    codeSnippets = codeSnippets.slice(0, 5000) + '\n\n[Snippets truncated]';
+  if (codeSnippets.length > 4000) {
+    codeSnippets = codeSnippets.slice(0, 4000) + '\n\n[Snippets truncated]';
   }
 
   const prompt = `Review the following code excerpts from the repository for bugs, logic flaws, memory leaks, unhandled exceptions, and security vulnerabilities.
@@ -336,7 +352,7 @@ Respond strictly in JSON matching this schema:
       systemPrompt:
         'You are a Senior Security Auditor and Code Quality Reviewer. Identify only real, actionable issues supported by the provided code snippets. Do not invent files or bugs.',
       temperature: 0.1,
-      maxTokens: 3000,
+      maxTokens: 3500, // Expanded token budget for 120B model
       model: ANALYSIS_MODEL,
     });
   } catch (err) {
@@ -573,7 +589,7 @@ ${codeContext}`;
     markdownDocs = await generateGroqCompletion(prompt, {
       systemPrompt,
       temperature: 0.1,
-      maxTokens: 3000,
+      maxTokens: 3500, // Expanded token budget for 120B model
       model: ANALYSIS_MODEL,
     });
   } catch (err) {
