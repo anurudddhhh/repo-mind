@@ -36,7 +36,7 @@ export default function Home() {
             Repo-Mind
           </h1>
           <p className="text-lg text-foreground-muted max-w-xl text-balance">
-            Your codebase is talking. Are you listening? Chat directly with your GitHub repositories using advanced RAG and Llama-3 AI.
+            Your codebase is talking. Are you listening? Chat directly with your GitHub repositories using AST-grounded RAG and Groq 120B AI.
           </p>
         </div>
 
