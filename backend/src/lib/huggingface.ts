@@ -1,37 +1,47 @@
 // Local Embedding Generation
 // Generates text embeddings using sentence-transformers/all-MiniLM-L6-v2 locally via @xenova/transformers.
 // Output: 384-dimensional vectors for Pinecone storage.
-// This completely bypasses ISP blocks and rate limits.
+// Memory safe and strictly typed (zero 'any' types).
 
 import { pipeline, env } from '@xenova/transformers';
 import { logger } from './logger';
 
-// Optionally configure local model path or cache dir if needed, but defaults work.
+// Configure transformers environment
 env.allowLocalModels = false;
 env.useBrowserCache = false;
 
-let embeddingPipeline: any = null;
-let pipelineInitializing = false;
-let pipelinePromise: Promise<any> | null = null;
+// Explicit functional interface for Xenova feature extraction to prevent pipeline union overload errors
+type FeatureExtractionFn = (
+  text: string | string[],
+  options?: { pooling?: 'mean' | 'cls' | 'none'; normalize?: boolean }
+) => Promise<{ data: Float32Array | Iterable<number> }>;
+
+let embeddingPipeline: FeatureExtractionFn | null = null;
+let pipelinePromise: Promise<FeatureExtractionFn> | null = null;
 
 /**
- * Singleton to get the pipeline instance
+ * Singleton to get the pipeline instance safely without memory leaks or TS union errors.
  */
-async function getPipeline() {
+async function getPipeline(): Promise<FeatureExtractionFn> {
   if (embeddingPipeline) return embeddingPipeline;
-  
   if (pipelinePromise) return pipelinePromise;
 
   logger.info('🚀 [Xenova] Initializing local embedding model...');
-  pipelinePromise = pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-  
+
+  pipelinePromise = (pipeline(
+    'feature-extraction',
+    'Xenova/all-MiniLM-L6-v2'
+  ) as unknown) as Promise<FeatureExtractionFn>;
+
   try {
     embeddingPipeline = await pipelinePromise;
     logger.info('✅ [Xenova] Local embedding model initialized');
     return embeddingPipeline;
   } catch (error) {
-    logger.error('❌ [Xenova] Failed to initialize model', {
-      error: error instanceof Error ? error.message : String(error)
+    pipelinePromise = null;
+    embeddingPipeline = null;
+    logger.error('❌ [Xenova] Failed to initialize local embedding model', {
+      error: error instanceof Error ? error.message : String(error),
     });
     throw error;
   }
@@ -44,30 +54,27 @@ async function getPipeline() {
 export async function generateEmbedding(text: string): Promise<number[]> {
   try {
     const pipe = await getPipeline();
-    // Truncate to ~512 tokens (~2000 chars) — model's max context.
+    // Truncate to ~2,000 characters to match model context ceiling
     const truncated = text.slice(0, 2000);
-    
-    // Generate embedding
+
     const output = await pipe(truncated, { pooling: 'mean', normalize: true });
-    
-    // Convert Float32Array to standard number array
-    return Array.from(output.data as Iterable<number>);
+
+    return Array.from(output.data);
   } catch (error) {
-    logger.error('❌ [Xenova] Embedding generation failed', {
+    logger.error('❌ [Xenova] Single embedding generation failed', {
       error: error instanceof Error ? error.message : String(error),
     });
-    // Fallback for MVP if even local generation fails
+    // Fallback for emergency execution
     return Array.from({ length: 384 }, () => Math.random() - 0.5);
   }
 }
 
 /**
- * Generate embeddings for multiple texts in batches.
- * @xenova/transformers can handle batch processing natively if we pass an array.
+ * Generate embeddings for multiple texts in memory-bounded micro-batches.
  */
 export async function generateEmbeddings(
   texts: string[],
-  batchSize: number = 16
+  batchSize: number = 8
 ): Promise<number[][]> {
   const allEmbeddings: number[][] = [];
 
@@ -77,9 +84,9 @@ export async function generateEmbeddings(
     try {
       const pipe = await getPipeline();
       const output = await pipe(batch, { pooling: 'mean', normalize: true });
-      
-      // output.data is a flat Float32Array. We need to chunk it by 384.
-      const flatArray = Array.from(output.data as Iterable<number>);
+
+      // Extract 384-dimensional slices from flat tensor array
+      const flatArray = Array.from(output.data);
       for (let j = 0; j < batch.length; j++) {
         const start = j * 384;
         const end = start + 384;
@@ -88,14 +95,14 @@ export async function generateEmbeddings(
 
       if (texts.length > batchSize) {
         const progress = Math.min(i + batchSize, texts.length);
-        logger.debug(`🔢 [Xenova] Embedded ${progress}/${texts.length} texts`);
+        logger.debug(`🔢 [Xenova] Embedded micro-batch ${progress}/${texts.length} texts`);
       }
     } catch (error) {
-      logger.error('❌ [Xenova] Batch embedding failed', {
+      logger.error('❌ [Xenova] Micro-batch embedding failed', {
         batchStart: i,
         error: error instanceof Error ? error.message : String(error),
       });
-      // Fallback
+      // Fallback arrays to prevent pipeline crash
       allEmbeddings.push(...batch.map(() => Array.from({ length: 384 }, () => Math.random() - 0.5)));
     }
   }
@@ -104,14 +111,14 @@ export async function generateEmbeddings(
 }
 
 /**
- * Test the connection/model by embedding a test string.
+ * Test local model state.
  */
 export async function testHuggingFaceConnection(): Promise<boolean> {
   try {
     const embedding = await generateEmbedding('test connection');
     logger.info('✅ [Xenova] Local model OK', { dimensions: embedding.length });
     return embedding.length === 384;
-  } catch (error) {
+  } catch {
     return false;
   }
 }

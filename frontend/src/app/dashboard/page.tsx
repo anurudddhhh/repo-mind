@@ -219,8 +219,8 @@ export default function DashboardPage() {
     } catch (err: unknown) {
       clearConnectionTimer();
 
-      // Task 6 Multi-Attempt Resilience Loop:
-      // If stream socket disconnected mid-indexing, poll Neon DB up to 4 times (12s total)
+      // Task 6 Multi-Attempt Resilience Loop (Container Reboot Aware):
+      // If stream socket disconnected mid-indexing, poll Neon DB 9 times over 36s (4s delay per attempt)
       if (targetFullName) {
         setIndexingStatus({
           stage: 'storing',
@@ -228,8 +228,8 @@ export default function DashboardPage() {
           progress: 95,
         });
 
-        for (let attempt = 1; attempt <= 4; attempt++) {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+        for (let attempt = 1; attempt <= 9; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 4000));
           try {
             const freshRepos = await repositoryApi.getRepositories();
             const indexedRepo = freshRepos.find(
@@ -244,7 +244,7 @@ export default function DashboardPage() {
               return;
             }
           } catch {
-            // Ignore temporary polling network glitches during retry attempts
+            // Ignore temporary polling network glitches during server container cold-boot
           }
         }
       }
