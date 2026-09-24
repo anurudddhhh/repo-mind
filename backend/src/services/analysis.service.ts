@@ -1,5 +1,5 @@
 // =============================================================================
-// AI CODE ANALYSIS SERVICE (CLEAN HIGH-LEVEL MERMAID DIAGRAMS & BUG ANALYSIS)
+// AI CODE ANALYSIS SERVICE (HIGH-LEVEL MERMAID DIAGRAMS & GUARDED BUG ANALYSIS)
 // =============================================================================
 
 import { AnalysisType } from '@prisma/client';
@@ -72,6 +72,21 @@ function isCoreSourceFile(filePath: string): boolean {
   return isCode && !isIgnored;
 }
 
+// Helper: Safely truncate code snippets at line boundaries to prevent mid-word truncation
+function getCleanCodeSnippet(content: string, maxChars: number = 800): string {
+  if (!content) return '';
+  if (content.length <= maxChars) return content.trim();
+
+  const sliced = content.slice(0, maxChars);
+  const lastNewline = sliced.lastIndexOf('\n');
+
+  if (lastNewline > 150) {
+    return sliced.slice(0, lastNewline) + '\n// [Remainder of function omitted for brevity]';
+  }
+
+  return sliced.trim() + '...';
+}
+
 // =============================================================================
 // FEATURE 05: ARCHITECTURE SUMMARY GENERATION
 // =============================================================================
@@ -80,7 +95,6 @@ export async function generateArchitectureSummary(
   repositoryId: string,
   forceRefresh: boolean = false
 ): Promise<ArchitectureSummary> {
-  // v11 cache key busts older web/file-path diagram entries
   const cacheKey = `analysis:${repositoryId}:architecture:v11`;
 
   if (!forceRefresh) {
@@ -134,7 +148,6 @@ export async function generateArchitectureSummary(
     throw new Error('Repository not found');
   }
 
-  // Filter for core source files only
   const sourceChunks = repo.codeChunks.filter((c) => isCoreSourceFile(c.filePath));
   const activeChunks = sourceChunks.length > 0 ? sourceChunks : repo.codeChunks;
 
@@ -162,8 +175,7 @@ export async function generateArchitectureSummary(
   let contextPrompt = Object.entries(fileSummary)
     .slice(0, 25)
     .map(([file, info]) => {
-      return `File: ${file}
-  Symbols: ${info.elements.slice(0, 5).join(', ')}`;
+      return `File: ${file}\n  Symbols: ${info.elements.slice(0, 5).join(', ')}`;
     })
     .join('\n\n');
 
@@ -262,14 +274,15 @@ Respond strictly with a JSON object matching this schema:
 }
 
 // =============================================================================
-// FEATURE 06: BUG DETECTION & VULNERABILITY ANALYSIS
+// FEATURE 06: BUG DETECTION & VULNERABILITY ANALYSIS (GROUNDED & GUARDED)
 // =============================================================================
 
 export async function detectBugsInRepository(
   repositoryId: string,
   forceRefresh: boolean = false
 ): Promise<BugDetectionResult> {
-  const cacheKey = `analysis:${repositoryId}:bugs:v3`;
+  // Bust older cache key versions containing mid-word character slice artifacts
+  const cacheKey = `analysis:${repositoryId}:bugs:v4`;
 
   if (!forceRefresh) {
     const cached = await cacheGet<BugDetectionResult>(cacheKey);
@@ -291,8 +304,9 @@ export async function detectBugsInRepository(
     }
   }
 
-  logger.info('🐞 [Analysis] Running bug & vulnerability scan...', { repositoryId });
+  logger.info('🐞 [Analysis] Running grounded bug & vulnerability scan...', { repositoryId });
 
+  // Sample core source code chunks (Functions, Methods, Components)
   const chunks = await prisma.codeChunk.findMany({
     where: {
       repositoryId,
@@ -310,25 +324,28 @@ export async function detectBugsInRepository(
     };
   }
 
-  let codeSnippets = chunks
-    .map(
-      (c) =>
-        `// File: ${c.filePath} (Lines ${c.startLine}-${c.endLine})\n// ${c.chunkType}: ${c.name}\n${c.content.slice(0, 500)}`
-    )
+  // Format excerpts cleanly with complete line boundaries
+  const codeSnippets = chunks
+    .map((c) => {
+      const cleanBody = getCleanCodeSnippet(c.content, 800);
+      return `// File: ${c.filePath} (Lines ${c.startLine}-${c.endLine})\n// ${c.chunkType}: ${c.name}\n${cleanBody}`;
+    })
     .join('\n\n--------------------\n\n');
 
-  if (codeSnippets.length > 4000) {
-    codeSnippets = codeSnippets.slice(0, 4000) + '\n\n[Snippets truncated]';
-  }
+  const prompt = `Review the following complete code excerpts from the repository for SEVERE bugs, unhandled crashes, memory leaks, and security vulnerabilities (e.g. SQL injection, XSS, exposed secrets).
 
-  const prompt = `Review the following code excerpts from the repository for bugs, logic flaws, memory leaks, unhandled exceptions, and security vulnerabilities.
-
-Code to review:
+Source Code Excerpts:
 ${codeSnippets}
+
+RULES FOR REPORTING BUGS:
+1. Identify ONLY real, high-confidence runtime defects supported by full lines in the excerpts.
+2. DO NOT flag missing imports or partial signatures resulting from excerpt boundaries.
+3. DO NOT flag incomplete words or truncated statements at the bottom of an excerpt.
+4. If no severe or actionable bugs exist in these excerpts, you MUST return "bugs": [] and "totalIssues": 0.
 
 Respond strictly in JSON matching this schema:
 {
-  "summary": "Brief 1-2 sentence overview of code quality and risk level.",
+  "summary": "Brief 1-2 sentence overview of code quality and security risk level.",
   "totalIssues": 0,
   "bugs": [
     {
@@ -337,16 +354,23 @@ Respond strictly in JSON matching this schema:
       "line": 42,
       "description": "Clear explanation of the bug or vulnerability",
       "suggestion": "How to fix the issue",
-      "codeSnippet": "Problematic line of code"
+      "codeSnippet": "Exact complete line of code containing the issue"
     }
   ]
 }`;
 
+  const systemPrompt = `You are a Senior Principal Security Auditor and Static Analysis Expert.
+Your mandate is to find ONLY REAL, SEVERE, UNAMBIGUOUS security vulnerabilities, memory leaks, or unhandled runtime crashes.
+
+CRITICAL ANTI-HALLUCINATION INSTRUCTIONS:
+1. CODE EXCERPT BOUNDARIES: Excerpts are sampled from code files. Ignore missing imports, unimported classes, or cutoffs at the end of an excerpt.
+2. HIGH CONFIDENCE THRESHOLD: Do not report nitpicks, code style preferences, missing comments, or speculative bugs.
+3. ZERO-BUG NORMALIZATION: If the code is well-structured and safe, return "bugs": [] and "totalIssues": 0. Do not invent bugs to fill the output.`;
+
   let result: BugDetectionResult;
   try {
     result = await generateGroqJSON<BugDetectionResult>(prompt, {
-      systemPrompt:
-        'You are a Senior Security Auditor and Code Quality Reviewer. Identify only real, actionable issues supported by the provided code snippets. Do not invent files or bugs.',
+      systemPrompt,
       temperature: 0.1,
       maxTokens: 3500,
       model: ANALYSIS_MODEL,
@@ -362,7 +386,32 @@ Respond strictly in JSON matching this schema:
     };
   }
 
-  result.totalIssues = result.bugs ? result.bugs.length : 0;
+  // Sanity Post-Processing: Filter out hallucinated bugs quoting truncated words
+  if (result.bugs && Array.isArray(result.bugs)) {
+    result.bugs = result.bugs.filter((b) => {
+      if (!b.description || !b.filePath) return false;
+      const descLower = b.description.toLowerCase();
+      // Filter out meta-bugs complaining about truncated context or missing imports
+      if (
+        descLower.includes('referenced without being called') &&
+        descLower.includes('function object')
+      ) {
+        return false;
+      }
+      if (
+        descLower.includes('incomplete') ||
+        descLower.includes('truncated') ||
+        descLower.includes('missing import')
+      ) {
+        return false;
+      }
+      return true;
+    });
+  } else {
+    result.bugs = [];
+  }
+
+  result.totalIssues = result.bugs.length;
 
   await prisma.analysisResult.upsert({
     where: {
@@ -387,7 +436,7 @@ Respond strictly in JSON matching this schema:
 
   await cacheSet(cacheKey, result, 86400);
 
-  logger.info('✅ [Analysis] Bug analysis complete', {
+  logger.info('✅ [Analysis] Grounded bug analysis complete', {
     repositoryId,
     issuesFound: result.totalIssues,
   });
