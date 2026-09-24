@@ -1,178 +1,4 @@
 // =============================================================================
-// GROQ AI CLIENT & COMPLETION SERVICE (WITH 429 BACKOFF & HARDENED JSON PARSER)
-// =============================================================================
-// Unified interface to execute AI prompts using Groq's high-speed engine.
-// Bypasses brittle server-side JSON mode to prevent HTTP 400 json_validate_failed errors.
-// =============================================================================
-
-import Groq from 'groq-sdk';
-import { logger } from './logger';
-
-// --- Environment Validation ---
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const DEFAULT_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-20b';
-
-if (!GROQ_API_KEY) {
-  logger.error('❌ [Groq] GROQ_API_KEY is missing from environment variables');
-  throw new Error('GROQ_API_KEY is required in .env');
-}
-
-// --- Singleton Client ---
-let groqClient: Groq | null = null;
-
-export function getGroqClient(): Groq {
-  if (!groqClient) {
-    groqClient = new Groq({
-      apiKey: GROQ_API_KEY,
-    });
-    logger.info('🤖 [Groq] Client initialized successfully', {
-      defaultModel: DEFAULT_MODEL,
-    });
-  }
-  return groqClient;
-}
-
-export interface GroqCompletionOptions {
-  systemPrompt?: string;
-  temperature?: number;
-  maxTokens?: number;
-  model?: string;
-  retryCount?: number;
-}
-
-// Asynchronous sleep helper
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * Generate a text completion from Groq.
- * Automatically retries up to 3 times on 429 rate limit errors with exponential backoff.
- */
-export async function generateGroqCompletion(
-  prompt: string,
-  options: GroqCompletionOptions = {}
-): Promise<string> {
-  const client = getGroqClient();
-  const model = options.model || DEFAULT_MODEL;
-  const currentRetry = options.retryCount || 0;
-  const MAX_RETRIES = 3;
-
-  const messages: Groq.Chat.Completions.ChatCompletionMessageParam[] = [];
-
-  if (options.systemPrompt) {
-    messages.push({
-      role: 'system',
-      content: options.systemPrompt,
-    });
-  }
-
-  messages.push({
-    role: 'user',
-    content: prompt,
-  });
-
-  try {
-    const response = await client.chat.completions.create({
-      model,
-      messages,
-      temperature: options.temperature ?? 0.1,
-      max_tokens: options.maxTokens ?? 3500,
-    });
-
-    const content = response.choices[0]?.message?.content || '';
-    return content.trim();
-  } catch (error: unknown) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    const isRateLimit = errorMsg.includes('429') || errorMsg.toLowerCase().includes('rate limit');
-
-    // 1. Handle 429 Rate Limits with exponential backoff
-    if (isRateLimit && currentRetry < MAX_RETRIES) {
-      const waitMatch = errorMsg.match(/try again in ([\d\.]+)s/i);
-      const parsedWaitSec = waitMatch ? parseFloat(waitMatch[1]) : 6;
-      const waitMs = Math.ceil(parsedWaitSec * 1000) + 1500;
-
-      logger.warn(`⏳ [Groq] 429 Rate limit encountered (Attempt ${currentRetry + 1}/${MAX_RETRIES}). Pausing for ${(waitMs / 1000).toFixed(1)}s...`);
-
-      await delay(waitMs);
-
-      return generateGroqCompletion(prompt, {
-        ...options,
-        retryCount: currentRetry + 1,
-      });
-    }
-
-    logger.error('❌ [Groq] Completion request failed:', {
-      model,
-      error: errorMsg,
-    });
-
-    throw error;
-  }
-}
-
-/**
- * Convenience helper to generate and reliably parse JSON responses.
- * Avoids passing response_format: { type: "json_object" } to prevent Groq API 400 errors.
- */
-export async function generateGroqJSON<T>(
-  prompt: string,
-  options: GroqCompletionOptions = {}
-): Promise<T> {
-  const jsonPrompt = `${prompt}\n\nCRITICAL REQUIREMENTS:
-1. Respond ONLY with a valid JSON object starting with { and ending with }.
-2. Do NOT include any markdown code fences (such as \`\`\`json) or extra conversational text outside the JSON object.
-3. Ensure all property keys and strings are double-quoted valid JSON.`;
-
-  const rawText = await generateGroqCompletion(jsonPrompt, {
-    ...options,
-    maxTokens: options.maxTokens ?? 3500,
-  });
-
-  // Pre-clean markdown code fences if model includes them
-  const cleanedText = rawText
-    .replace(/^```json\s*/i, '')
-    .replace(/^```md\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
-
-  // Extract JSON string using robust regex matcher
-  const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
-  const jsonString = jsonMatch ? jsonMatch[0] : cleanedText;
-
-  try {
-    return JSON.parse(jsonString) as T;
-  } catch {
-    // Structural cleanup for common LLM JSON quirks (trailing commas, control characters)
-    const sanitized = jsonString
-      .replace(/,\s*([\]}])/g, '$1') // Remove trailing commas
-      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '') // Remove unescaped control chars
-      .trim();
-
-    try {
-      return JSON.parse(sanitized) as T;
-    } catch {
-      logger.error('❌ [Groq] Failed to parse JSON response:', {
-        rawSnippet: rawText.slice(0, 300),
-      });
-      throw new Error(`Failed to parse AI JSON response`);
-    }
-  }
-}
-
-/**
- * Test the Groq connection with a minimal prompt.
- */
-export async function testGroqConnection(): Promise<boolean> {
-  try {
-    const response = await generateGroqCompletion('Respond with "OK"', {
-      maxTokens: 10,
-    });
-    return response.length > 0;
-  } catch {
-    return false;
-  }
-}
-// =============================================================================
 // GROQ AI CLIENT & MULTI-LLM FALLBACK SERVICE
 // =============================================================================
 // Features automated Multi-LLM Cascade Fallback:
@@ -273,7 +99,7 @@ export async function generateGroqCompletion(
     });
 
     const content = response.choices[0]?.message?.content || '';
-    
+
     if (currentModelIndex > 0) {
       logger.info(`✨ [Groq] Successfully generated completion using fallback model: ${activeModel}`);
     }
@@ -291,7 +117,7 @@ export async function generateGroqCompletion(
       const waitMs = Math.ceil(parsedWaitSec * 1000) + 1000;
 
       logger.warn(
-        `⏳ [Groq] Rate limit on ${activeModel} (Attempt ${currentRetry + 1}/${MAX_RETRIES_PER_MODEL}). Pausing ${ (waitMs / 1000).toFixed(1) }s...`
+        `⏳ [Groq] Rate limit on ${activeModel} (Attempt ${currentRetry + 1}/${MAX_RETRIES_PER_MODEL}). Pausing ${(waitMs / 1000).toFixed(1)}s...`
       );
 
       await delay(waitMs);
@@ -392,5 +218,4 @@ export async function testGroqConnection(): Promise<boolean> {
   }
 }
 
-export default generateGroqCompletion;
 export default generateGroqCompletion;
