@@ -82,7 +82,7 @@ Automatically generates:
 - README files
 - Technical explanations
 - Function/class descriptions
-- Module overviews
+- Module 
 
 ### 8. 📊 Commit History Analysis
 Queries the GitHub API to provide intelligent summaries of:
