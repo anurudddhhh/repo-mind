@@ -22,15 +22,23 @@ import { analyzeCommitHistory } from '../services/commit.service';
 import { logger } from '../lib/logger';
 
 /**
+ * Helper to extract boolean forceRefresh flag from incoming query parameters.
+ * Accepts both ?forceRefresh=true and ?refresh=true.
+ */
+function isForceRefresh(req: Request): boolean {
+  return req.query.forceRefresh === 'true' || req.query.refresh === 'true';
+}
+
+/**
  * GET /api/analyze/:repoId/architecture
- * Query params: ?refresh=true (optional)
+ * Query params: ?forceRefresh=true or ?refresh=true (optional)
  *
  * Returns high-level system architecture, module list, and Mermaid diagram.
  */
 export async function getArchitectureSummary(req: Request, res: Response): Promise<void> {
   const { repoId } = req.params;
   const user = req.user!;
-  const forceRefresh = req.query.refresh === 'true';
+  const forceRefresh = isForceRefresh(req);
 
   try {
     const repository = await prisma.repository.findFirst({
@@ -62,30 +70,31 @@ export async function getArchitectureSummary(req: Request, res: Response): Promi
       success: true,
       data: summary,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errObj = error instanceof Error ? error : new Error(String(error));
     logger.error('❌ [Analysis Controller] Failed to get architecture summary:', {
       repoId,
-      error: error?.message || String(error),
+      error: errObj.message,
     });
 
     res.status(500).json({
       success: false,
       error: 'Failed to generate architecture summary',
-      message: error?.message || 'Internal server error',
+      message: errObj.message,
     });
   }
 }
 
 /**
  * POST /api/analyze/:repoId/bugs
- * Query params: ?refresh=true (optional)
+ * Query params: ?forceRefresh=true or ?refresh=true (optional)
  *
  * Scans code chunks for vulnerabilities, memory leaks, and logic flaws.
  */
 export async function scanForBugs(req: Request, res: Response): Promise<void> {
   const { repoId } = req.params;
   const user = req.user!;
-  const forceRefresh = req.query.refresh === 'true';
+  const forceRefresh = isForceRefresh(req);
 
   try {
     const repository = await prisma.repository.findFirst({
@@ -117,23 +126,24 @@ export async function scanForBugs(req: Request, res: Response): Promise<void> {
       success: true,
       data: bugResults,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errObj = error instanceof Error ? error : new Error(String(error));
     logger.error('❌ [Analysis Controller] Failed to scan for bugs:', {
       repoId,
-      error: error?.message || String(error),
+      error: errObj.message,
     });
 
     res.status(500).json({
       success: false,
       error: 'Failed to scan repository for bugs',
-      message: error?.message || 'Internal server error',
+      message: errObj.message,
     });
   }
 }
 
 /**
  * POST /api/analyze/:repoId/docs
- * Query params: ?refresh=true (optional)
+ * Query params: ?forceRefresh=true or ?refresh=true (optional)
  * Body: { filePath?: string } (optional - if omitted, generates full README)
  *
  * Generates technical documentation for a specific file or the entire repository.
@@ -141,7 +151,7 @@ export async function scanForBugs(req: Request, res: Response): Promise<void> {
 export async function getDocumentation(req: Request, res: Response): Promise<void> {
   const { repoId } = req.params;
   const { filePath } = req.body || {};
-  const forceRefresh = req.query.refresh === 'true'; // <--- FIX: Extract forceRefresh flag
+  const forceRefresh = isForceRefresh(req);
   const user = req.user!;
 
   try {
@@ -168,38 +178,38 @@ export async function getDocumentation(req: Request, res: Response): Promise<voi
       return;
     }
 
-    // Pass forceRefresh to bypass stale empty cache entries
     const docs = await generateDocumentation(repoId, filePath, forceRefresh);
 
     res.status(200).json({
       success: true,
       data: docs,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errObj = error instanceof Error ? error : new Error(String(error));
     logger.error('❌ [Analysis Controller] Failed to generate documentation:', {
       repoId,
       filePath,
-      error: error?.message || String(error),
+      error: errObj.message,
     });
 
     res.status(500).json({
       success: false,
       error: 'Failed to generate documentation',
-      message: error?.message || 'Internal server error',
+      message: errObj.message,
     });
   }
 }
 
 /**
  * GET /api/analyze/:repoId/commits
- * Query params: ?refresh=true (optional)
+ * Query params: ?forceRefresh=true or ?refresh=true (optional)
  *
  * Feature 08: Analyzes recent commit history, contributors, and development velocity.
  */
 export async function getCommitAnalysis(req: Request, res: Response): Promise<void> {
   const { repoId } = req.params;
   const user = req.user!;
-  const forceRefresh = req.query.refresh === 'true';
+  const forceRefresh = isForceRefresh(req);
 
   try {
     const repository = await prisma.repository.findFirst({
@@ -227,16 +237,17 @@ export async function getCommitAnalysis(req: Request, res: Response): Promise<vo
       success: true,
       data: analysis,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errObj = error instanceof Error ? error : new Error(String(error));
     logger.error('❌ [Analysis Controller] Failed to analyze commits:', {
       repoId,
-      error: error?.message || String(error),
+      error: errObj.message,
     });
 
     res.status(500).json({
       success: false,
       error: 'Failed to analyze commit history',
-      message: error?.message || 'Internal server error',
+      message: errObj.message,
     });
   }
 }

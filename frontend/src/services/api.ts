@@ -1,402 +1,414 @@
-// =============================================================================
-// REPO-MIND FRONTEND — UNIFIED API SERVICE LAYER (BUFFER-RESILIENT)
-// =============================================================================
-// This is the SINGLE source of truth for all backend communication.
-// NO component should ever call fetch() or axios directly (except for SSE
-// streaming, which requires native fetch — see streamChat and startIndexing).
-// =============================================================================
-
-import { api, API_BASE_URL } from '@/lib/api';
-import {
+import axiosInstance from '@/lib/api';
+import { useAuthStore } from '@/store/useAuthStore';
+import type {
   ApiResponse,
   Repository,
-  SearchResponse,
+  IndexingProgress,
+  SearchResult,
   ArchitectureSummary,
   BugDetectionResult,
   DocumentationResult,
   CommitAnalysis,
-  User,
-  IndexingProgress,
 } from '@/types';
-import { useAuthStore } from '@/store/useAuthStore';
 
-// =============================================================================
-// FILE TREE TYPES (for getRepositoryTree)
-// =============================================================================
-export interface TreeSymbol {
-  name: string;
-  type: string;
-  lines: string;
+// ─── Citation Types ──────────────────────────────────────────────────────────
+
+export interface CitationEntry {
+  ref: number;
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  language: string;
+  snippetPreview: string;
 }
 
-export interface TreeFileItem {
+// ─── Repository Tree Types ───────────────────────────────────────────────────
+
+export interface TreeSymbol {
+  type: string;
+  name: string;
+  lines: string | number;
+}
+
+export interface TreeFileEntry {
   filePath: string;
   language: string;
-  symbolsCount: number;
-  symbols: TreeSymbol[];
+  symbols?: TreeSymbol[];
 }
 
 export interface RepositoryTreeResponse {
   totalFiles: number;
-  files: TreeFileItem[];
+  files: TreeFileEntry[];
 }
 
-// =============================================================================
-// AUTH API
-// =============================================================================
+/** @deprecated Kept for backward compatibility */
+export interface RepositoryTreeNode {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  children?: RepositoryTreeNode[];
+  symbols?: Array<{
+    name: string;
+    type: string;
+    line: number;
+  }>;
+}
+
+// ─── SSE Stream Callback Interface ───────────────────────────────────────────
+
+export interface ChatStreamCallbacks {
+  onChunk?: (data: { content: string }) => void;
+  onStatus?: (data: { message: string }) => void;
+  onCitations?: (data: { citations: CitationEntry[] }) => void;
+  onError?: (data: { error: string }) => void;
+  onDone?: () => void;
+}
+
+// ─── Auth API ────────────────────────────────────────────────────────────────
+
 export const authApi = {
-  /**
-   * Get the GitHub OAuth login URL.
-   */
-  getGithubLoginUrl: (): string => {
-    return '/api/auth/github';
+  getMe: async () => {
+    const response = await axiosInstance.get<ApiResponse>('/auth/me');
+    return response.data;
   },
-
-  /**
-   * Get the currently logged-in user's profile.
-   * Returns null if not logged in or token is expired.
-   */
-  getMe: async (): Promise<User | null> => {
-    try {
-      const response = await api.get<ApiResponse<User>>('/api/auth/me');
-      return response.data.data ?? null;
-    } catch {
-      return null;
-    }
-  },
-
-  /**
-   * Log the user out by calling the backend and clearing local state.
-   */
-  logout: async (): Promise<void> => {
-    try {
-      await api.post('/api/auth/logout');
-    } finally {
-      useAuthStore.getState().logout();
-    }
-  },
-
-  /**
-   * Get the stored JWT token from Zustand.
-   */
-  getToken: (): string | null => {
-    return useAuthStore.getState().token;
+  logout: async () => {
+    const response = await axiosInstance.post<ApiResponse>('/auth/logout');
+    return response.data;
   },
 };
 
-// =============================================================================
-// REPOSITORY API
-// =============================================================================
+// ─── Repository API ──────────────────────────────────────────────────────────
+
 export const repositoryApi = {
-  /**
-   * Get all repositories the current user has indexed.
-   */
   getRepositories: async (): Promise<Repository[]> => {
-    const response = await api.get<ApiResponse<Repository[]>>('/api/repositories');
+    const response = await axiosInstance.get<ApiResponse<Repository[]>>('/repositories');
     return response.data.data ?? [];
   },
-
-  /**
-   * Delete a repository and all its associated data.
-   */
-  deleteRepository: async (repoId: string): Promise<void> => {
-    await api.delete(`/api/repositories/${repoId}`);
+  deleteRepository: async (id: string) => {
+    const response = await axiosInstance.delete<ApiResponse>(`/repositories/${id}`);
+    return response.data;
   },
 };
 
-// =============================================================================
-// INDEXING API
-// =============================================================================
-export const indexingApi = {
-  /**
-   * Start the indexing pipeline for a GitHub repository.
-   * Uses native fetch() for SSE streaming support with buffer assembly & socket closure resilience.
-   */
-  startIndexing: async (
-    repoUrl: string,
-    onProgress?: (event: IndexingProgress) => void
-  ): Promise<void> => {
-    const token = useAuthStore.getState().token;
+// ─── Indexing API ────────────────────────────────────────────────────────────
 
-    const response = await fetch(`${API_BASE_URL}/api/indexing/start`, {
+export const indexingApi = {
+  startIndexing: async (
+    githubUrl: string,
+    onProgress: (progress: IndexingProgress) => void
+  ) => {
+    const token = useAuthStore.getState().token;
+    const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+
+    const response = await fetch(`${baseURL}/indexing/start`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ repoUrl }),
+      body: JSON.stringify({ githubUrl }),
     });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Indexing failed with status ${response.status}`);
+      const message =
+        typeof errorData === 'object' &&
+        errorData !== null &&
+        'message' in errorData &&
+        typeof (errorData as { message: unknown }).message === 'string'
+          ? (errorData as { message: string }).message
+          : 'Failed to start indexing';
+      throw new Error(message);
     }
 
-    if (!response.body) {
-      throw new Error('No response stream available');
-    }
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('ReadableStream not supported');
 
-    const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let done = false;
-    let isCompleted = false;
     let buffer = '';
 
-    try {
-      while (!done) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-        if (value) {
-          // Append new bytes to our stream parsing buffer
-          buffer += decoder.decode(value, { stream: true });
-          
-          // Split complete lines; extract and hold onto any trailing incomplete line fragment
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
 
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-
-            if (trimmed.startsWith('data: ')) {
-              const dataStr = trimmed.substring(6).trim();
-              if (!dataStr) continue;
-
-              try {
-                const event: IndexingProgress = JSON.parse(dataStr);
-
-                // Set flags to safely suppress downstream proxy socket disconnect exceptions
-                if (event.stage === 'complete' || event.progress === 100) {
-                  isCompleted = true;
-                }
-
-                if (onProgress) {
-                  onProgress(event);
-                }
-              } catch {
-                // Skip malformed lines
-              }
-            }
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6)) as IndexingProgress;
+            onProgress(data);
+          } catch {
+            // Ignore partial JSON chunks
           }
         }
       }
-    } catch (err) {
-      // If we received the completed event before the connection dropped,
-      // we gracefully return instead of bubbling a red herring connection error.
-      if (isCompleted) {
-        return;
-      }
-      throw err;
     }
   },
 
-  /**
-   * Check the current indexing status of a repository.
-   */
-  getIndexingStatus: async (repoId: string): Promise<IndexingProgress | null> => {
-    try {
-      const response = await api.get<ApiResponse<IndexingProgress>>(
-        `/api/indexing/status/${repoId}`
-      );
-      return response.data.data ?? null;
-    } catch {
-      return null;
-    }
+  getStatus: async (repositoryId: string) => {
+    const response = await axiosInstance.get<ApiResponse<IndexingProgress>>(
+      `/indexing/status/${repositoryId}`
+    );
+    return response.data;
   },
 };
 
-// =============================================================================
-// SEARCH API
-// =============================================================================
+// ─── Search API ──────────────────────────────────────────────────────────────
+
 export const searchApi = {
-  /**
-   * Perform a semantic (meaning-based) search across the repository.
-   */
-  semanticSearch: async (
-    repoId: string,
-    query: string,
-    limit: number = 10
-  ): Promise<SearchResponse> => {
-    const response = await api.get<ApiResponse<SearchResponse>>(
-      `/api/search/${repoId}`,
-      { params: { q: query, limit } }
+  searchRepository: async (repositoryId: string, query: string) => {
+    const response = await axiosInstance.post<ApiResponse<SearchResult[]>>(
+      `/search/${repositoryId}`,
+      { query }
     );
-    return response.data.data!;
+    return response.data;
   },
 
-  /**
-   * Search for files and symbols by name.
-   */
-  fileSearch: async (
-    repoId: string,
-    query: string
-  ): Promise<string[]> => {
-    const response = await api.get<ApiResponse<string[]>>(
-      `/api/search/${repoId}/files`,
-      { params: { q: query } }
+  searchFiles: async (repositoryId: string, query: string) => {
+    const response = await axiosInstance.get<ApiResponse<SearchResult[]>>(
+      `/search/${repositoryId}/files`,
+      { params: { query } }
     );
-    return response.data.data ?? [];
+    return response.data;
   },
 
-  /**
-   * Get the full file tree with AST symbol metadata for a repository.
-   */
   getRepositoryTree: async (
-    repoId: string
-  ): Promise<RepositoryTreeResponse> => {
-    const response = await api.get<ApiResponse<RepositoryTreeResponse>>(
-      `/api/search/${repoId}/tree`
+    repositoryId: string
+  ): Promise<RepositoryTreeResponse | null> => {
+    const response = await axiosInstance.get<ApiResponse<RepositoryTreeResponse>>(
+      `/search/${repositoryId}/tree`
     );
-    return response.data.data!;
+    return response.data.data ?? null;
+  },
+
+  getTree: async (
+    repositoryId: string
+  ): Promise<RepositoryTreeResponse | null> => {
+    const response = await axiosInstance.get<ApiResponse<RepositoryTreeResponse>>(
+      `/search/${repositoryId}/tree`
+    );
+    return response.data.data ?? null;
   },
 };
 
-// =============================================================================
-// CHAT API
-// =============================================================================
-export const chatApi = {
-  /**
-   * Send a message to the AI chat and stream the response token-by-token.
-   * Utilizes line-buffering to prevent token drops due to network TCP packet splits.
-   */
-  streamChat: async (
-    repoId: string,
-    message: string,
-    onChunk: (content: string) => void,
-    onStatus?: (message: string) => void,
-    onError?: (error: string) => void
-  ): Promise<void> => {
-    const token = useAuthStore.getState().token;
+// ─── Chat API (With Citations Support) ───────────────────────────────────────
 
-    const response = await fetch(`${API_BASE_URL}/api/chat/${repoId}`, {
+export const chatApi = {
+  streamChat: async (
+    repositoryId: string,
+    message: string,
+    callbacks: ChatStreamCallbacks
+  ) => {
+    const token = useAuthStore.getState().token;
+    const baseURL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+
+    const response = await fetch(`${baseURL}/chat/${repositoryId}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ message }),
     });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Chat failed with status ${response.status}`);
+      const messageText =
+        typeof errorData === 'object' &&
+        errorData !== null &&
+        'message' in errorData &&
+        typeof (errorData as { message: unknown }).message === 'string'
+          ? (errorData as { message: string }).message
+          : 'Failed to send message';
+      throw new Error(messageText);
     }
 
-    if (!response.body) {
-      throw new Error('No response stream available');
-    }
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('ReadableStream not supported');
 
-    const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let done = false;
-    let currentEvent = '';
     let buffer = '';
 
-    while (!done) {
-      const { value, done: doneReading } = await reader.read();
-      done = doneReading;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-      if (value) {
-        // Feed chunk into parser buffer
-        buffer += decoder.decode(value, { stream: true });
-        
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep trailing incomplete token fragment
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split('\n\n');
+      buffer = events.pop() || '';
 
+      for (const rawEvent of events) {
+        if (!rawEvent.trim()) continue;
+
+        let eventType = 'chunk';
+        let eventData = '';
+
+        const lines = rawEvent.split('\n');
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-
-          if (trimmed.startsWith('event: ')) {
-            currentEvent = trimmed.substring(7).trim();
-          } else if (trimmed.startsWith('data: ')) {
-            const dataStr = trimmed.substring(6).trim();
-            if (!dataStr) continue;
-
-            try {
-              const data = JSON.parse(dataStr);
-
-              if (currentEvent === 'chunk') {
-                onChunk(data.content);
-              } else if (currentEvent === 'status' && onStatus) {
-                onStatus(data.message);
-              } else if (currentEvent === 'error' && onError) {
-                onError(data.error);
-              }
-            } catch {
-              // Ignore malformed or truncated JSON lines safely
-            }
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            eventData = line.slice(6).trim();
           }
+        }
+
+        if (!eventData) continue;
+
+        try {
+          const parsed: unknown = JSON.parse(eventData);
+
+          switch (eventType) {
+            case 'status':
+              if (
+                typeof parsed === 'object' &&
+                parsed !== null &&
+                'message' in parsed &&
+                typeof (parsed as { message: unknown }).message === 'string'
+              ) {
+                callbacks.onStatus?.({ message: (parsed as { message: string }).message });
+              }
+              break;
+            case 'citations':
+              if (
+                typeof parsed === 'object' &&
+                parsed !== null &&
+                'citations' in parsed &&
+                Array.isArray((parsed as { citations: unknown }).citations)
+              ) {
+                callbacks.onCitations?.({
+                  citations: (parsed as { citations: CitationEntry[] }).citations,
+                });
+              }
+              break;
+            case 'chunk':
+              if (
+                typeof parsed === 'object' &&
+                parsed !== null &&
+                'content' in parsed &&
+                typeof (parsed as { content: unknown }).content === 'string'
+              ) {
+                callbacks.onChunk?.({ content: (parsed as { content: string }).content });
+              }
+              break;
+            case 'error':
+              if (
+                typeof parsed === 'object' &&
+                parsed !== null &&
+                'error' in parsed &&
+                typeof (parsed as { error: unknown }).error === 'string'
+              ) {
+                callbacks.onError?.({ error: (parsed as { error: string }).error });
+              }
+              break;
+            case 'done':
+              callbacks.onDone?.();
+              break;
+          }
+        } catch {
+          // Ignore partial JSON blocks
         }
       }
     }
   },
 };
 
-// =============================================================================
-// ANALYSIS API
-// =============================================================================
+// ─── Analysis API ────────────────────────────────────────────────────────────
+
 export const analysisApi = {
-  /**
-   * Get or generate an architecture summary for the repository.
-   */
   getArchitectureSummary: async (
-    repoId: string,
+    repositoryId: string,
     forceRefresh: boolean = false
-  ): Promise<ArchitectureSummary> => {
-    const response = await api.get<ApiResponse<ArchitectureSummary>>(
-      `/api/analyze/${repoId}/architecture`,
-      { params: { refresh: forceRefresh } }
+  ): Promise<ArchitectureSummary | null> => {
+    const response = await axiosInstance.get<ApiResponse<ArchitectureSummary>>(
+      `/analyze/${repositoryId}/architecture`,
+      { params: { forceRefresh } }
     );
-    return response.data.data!;
+    return response.data.data ?? null;
   },
 
-  /**
-   * Run AI-powered bug detection on the repository's code chunks.
-   */
   detectBugs: async (
-    repoId: string,
+    repositoryId: string,
     forceRefresh: boolean = false
-  ): Promise<BugDetectionResult> => {
-    const response = await api.post<ApiResponse<BugDetectionResult>>(
-      `/api/analyze/${repoId}/bugs`,
+  ): Promise<BugDetectionResult | null> => {
+    const response = await axiosInstance.post<ApiResponse<BugDetectionResult>>(
+      `/analyze/${repositoryId}/bugs`,
       {},
-      { params: { refresh: forceRefresh } }
+      { params: { forceRefresh } }
     );
-    return response.data.data!;
+    return response.data.data ?? null;
   },
 
-  /**
-   * Generate technical documentation for the repository or a specific file.
-   * Supports forceRefresh parameter to bypass stale/empty cache entries.
-   */
-  generateDocumentation: async (
-    repoId: string,
+  scanForBugs: async (
+    repositoryId: string,
+    forceRefresh: boolean = false
+  ): Promise<BugDetectionResult | null> => {
+    return analysisApi.detectBugs(repositoryId, forceRefresh);
+  },
+
+  getDocumentation: async (
+    repositoryId: string,
     filePath?: string,
     forceRefresh: boolean = false
-  ): Promise<DocumentationResult> => {
-    const response = await api.post<ApiResponse<DocumentationResult>>(
-      `/api/analyze/${repoId}/docs`,
+  ): Promise<DocumentationResult | null> => {
+    const response = await axiosInstance.post<ApiResponse<DocumentationResult>>(
+      `/analyze/${repositoryId}/docs`,
       { filePath },
-      { params: { refresh: forceRefresh } }
+      { params: { forceRefresh } }
     );
-    return response.data.data!;
+    return response.data.data ?? null;
   },
 
-  /**
-   * Analyze commit history, contributors, and development velocity.
-   */
-  analyzeCommits: async (
-    repoId: string,
+  generateDocumentation: async (
+    repositoryId: string,
+    filePath?: string,
     forceRefresh: boolean = false
-  ): Promise<CommitAnalysis> => {
-    const response = await api.get<ApiResponse<CommitAnalysis>>(
-      `/api/analyze/${repoId}/commits`,
-      { params: { refresh: forceRefresh } }
+  ): Promise<DocumentationResult | null> => {
+    return analysisApi.getDocumentation(repositoryId, filePath, forceRefresh);
+  },
+
+  getCommitAnalysis: async (
+    repositoryId: string,
+    forceRefresh: boolean = false
+  ): Promise<CommitAnalysis | null> => {
+    const response = await axiosInstance.get<ApiResponse<CommitAnalysis>>(
+      `/analyze/${repositoryId}/commits`,
+      { params: { forceRefresh } }
     );
-    return response.data.data!;
+    return response.data.data ?? null;
+  },
+
+  analyzeCommits: async (
+    repositoryId: string,
+    forceRefresh: boolean = false
+  ): Promise<CommitAnalysis | null> => {
+    return analysisApi.getCommitAnalysis(repositoryId, forceRefresh);
+  },
+
+  getArchitecture: async (
+    repositoryId: string
+  ): Promise<ArchitectureSummary | null> => {
+    return analysisApi.getArchitectureSummary(repositoryId, false);
+  },
+
+  scanBugs: async (
+    repositoryId: string
+  ): Promise<BugDetectionResult | null> => {
+    return analysisApi.detectBugs(repositoryId, false);
+  },
+
+  getDocs: async (
+    repositoryId: string,
+    filePath?: string
+  ): Promise<DocumentationResult | null> => {
+    return analysisApi.getDocumentation(repositoryId, filePath, false);
+  },
+
+  getCommits: async (
+    repositoryId: string
+  ): Promise<CommitAnalysis | null> => {
+    return analysisApi.getCommitAnalysis(repositoryId, false);
   },
 };
-
-export default api;

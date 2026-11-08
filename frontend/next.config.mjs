@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
+
+// Strip any trailing /api or trailing slash to prevent duplicated /api/api routes
+const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const backendBaseUrl = rawApiUrl.replace(/\/api\/?$/, '').replace(/\/$/, '');
+
 const nextConfig = {
-  // Optimize heavy package imports for instant dev reloads
+  // Optimize heavy package imports for fast reloads
   experimental: {
     optimizePackageImports: ['lucide-react', 'mermaid', 'react-syntax-highlighter'],
   },
@@ -27,7 +32,7 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/:path*`,
+        destination: `${backendBaseUrl}/api/:path*`,
       },
     ];
   },

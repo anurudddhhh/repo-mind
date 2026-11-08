@@ -1,0 +1,214 @@
+{
+  "description": "Repo-Mind retrieval evaluation dataset. Each question maps to the source files that should appear in top-K search results.",
+  "repository": "anurudddhhh/repo-mind",
+  "questions": [
+    {
+      "id": 1,
+      "question": "How does GitHub OAuth authentication work?",
+      "expectedFiles": [
+        "backend/src/controllers/auth.controller.ts",
+        "backend/src/lib/passport.ts"
+      ],
+      "category": "auth"
+    },
+    {
+      "id": 2,
+      "question": "How are JWT tokens generated and verified?",
+      "expectedFiles": [
+        "backend/src/lib/jwt.ts",
+        "backend/src/middleware/auth.middleware.ts"
+      ],
+      "category": "auth"
+    },
+    {
+      "id": 3,
+      "question": "How does the auth middleware protect routes?",
+      "expectedFiles": [
+        "backend/src/middleware/auth.middleware.ts"
+      ],
+      "category": "auth"
+    },
+    {
+      "id": 4,
+      "question": "How are source code files split into semantic chunks?",
+      "expectedFiles": [
+        "backend/src/services/chunking.service.ts"
+      ],
+      "category": "chunking"
+    },
+    {
+      "id": 5,
+      "question": "How does the AST parser extract functions and classes from code?",
+      "expectedFiles": [
+        "backend/src/services/chunking.service.ts",
+        "backend/src/lib/tree-sitter.ts"
+      ],
+      "category": "chunking"
+    },
+    {
+      "id": 6,
+      "question": "How are import dependencies extracted between files?",
+      "expectedFiles": [
+        "backend/src/services/chunking.service.ts"
+      ],
+      "category": "chunking"
+    },
+    {
+      "id": 7,
+      "question": "How does Tree-sitter parse source code into syntax trees?",
+      "expectedFiles": [
+        "backend/src/lib/tree-sitter.ts"
+      ],
+      "category": "chunking"
+    },
+    {
+      "id": 8,
+      "question": "How are code chunks converted into vector embeddings?",
+      "expectedFiles": [
+        "backend/src/services/embedding.service.ts",
+        "backend/src/lib/huggingface.ts"
+      ],
+      "category": "embedding"
+    },
+    {
+      "id": 9,
+      "question": "What embedding model is used and what is the vector dimension?",
+      "expectedFiles": [
+        "backend/src/lib/huggingface.ts"
+      ],
+      "category": "embedding"
+    },
+    {
+      "id": 10,
+      "question": "How does semantic vector search find relevant code?",
+      "expectedFiles": [
+        "backend/src/services/search.service.ts"
+      ],
+      "category": "search"
+    },
+    {
+      "id": 11,
+      "question": "How does the hybrid search fallback to keyword matching work?",
+      "expectedFiles": [
+        "backend/src/services/search.service.ts"
+      ],
+      "category": "search"
+    },
+    {
+      "id": 12,
+      "question": "How are vectors stored and queried in Pinecone?",
+      "expectedFiles": [
+        "backend/src/lib/pinecone.ts"
+      ],
+      "category": "search"
+    },
+    {
+      "id": 13,
+      "question": "How does the RAG chat pipeline stream responses?",
+      "expectedFiles": [
+        "backend/src/services/chat.service.ts"
+      ],
+      "category": "chat"
+    },
+    {
+      "id": 14,
+      "question": "How are chat sessions and messages stored in the database?",
+      "expectedFiles": [
+        "backend/src/services/chat.service.ts",
+        "backend/src/controllers/chat.controller.ts"
+      ],
+      "category": "chat"
+    },
+    {
+      "id": 15,
+      "question": "How does the system detect when a user wants a diagram?",
+      "expectedFiles": [
+        "backend/src/services/chat.service.ts",
+        "backend/src/services/mermaid.service.ts"
+      ],
+      "category": "chat"
+    },
+    {
+      "id": 16,
+      "question": "How are Mermaid architecture diagrams generated from code?",
+      "expectedFiles": [
+        "backend/src/services/mermaid.service.ts"
+      ],
+      "category": "analysis"
+    },
+    {
+      "id": 17,
+      "question": "How does the bug detection and vulnerability scanner work?",
+      "expectedFiles": [
+        "backend/src/services/analysis.service.ts"
+      ],
+      "category": "analysis"
+    },
+    {
+      "id": 18,
+      "question": "How are architecture summaries generated for a repository?",
+      "expectedFiles": [
+        "backend/src/services/analysis.service.ts"
+      ],
+      "category": "analysis"
+    },
+    {
+      "id": 19,
+      "question": "How does the AI documentation generator work?",
+      "expectedFiles": [
+        "backend/src/services/analysis.service.ts"
+      ],
+      "category": "analysis"
+    },
+    {
+      "id": 20,
+      "question": "How are Git commit histories fetched and analyzed?",
+      "expectedFiles": [
+        "backend/src/services/commit.service.ts"
+      ],
+      "category": "analysis"
+    },
+    {
+      "id": 21,
+      "question": "How does the Groq AI integration handle model fallbacks?",
+      "expectedFiles": [
+        "backend/src/lib/groq.ts"
+      ],
+      "category": "ai"
+    },
+    {
+      "id": 22,
+      "question": "How does the Redis caching layer prevent redundant API calls?",
+      "expectedFiles": [
+        "backend/src/lib/redis.ts"
+      ],
+      "category": "caching"
+    },
+    {
+      "id": 23,
+      "question": "How does the rate limiter protect AI endpoints?",
+      "expectedFiles": [
+        "backend/src/middleware/rateLimit.middleware.ts"
+      ],
+      "category": "caching"
+    },
+    {
+      "id": 24,
+      "question": "How are GitHub repository files fetched using the Trees API?",
+      "expectedFiles": [
+        "backend/src/lib/github.ts"
+      ],
+      "category": "indexing"
+    },
+    {
+      "id": 25,
+      "question": "How does the full repository indexing pipeline work end to end?",
+      "expectedFiles": [
+        "backend/src/controllers/indexing.controller.ts",
+        "backend/src/services/chunking.service.ts",
+        "backend/src/services/embedding.service.ts"
+      ],
+      "category": "indexing"
+    }
+  ]
+}
