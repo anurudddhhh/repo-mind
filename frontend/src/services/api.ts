@@ -93,7 +93,7 @@ export const repositoryApi = {
 // ─── Indexing API ────────────────────────────────────────────────────────────
 
 export const indexingApi = {
-  startIndexing: async (
+    startIndexing: async (
     githubUrl: string,
     onProgress: (progress: IndexingProgress) => void
   ) => {
@@ -126,33 +126,103 @@ export const indexingApi = {
 
     const decoder = new TextDecoder();
     let buffer = '';
+    let lastRepositoryId: string | null = null;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    // ── Phase 1: Read SSE stream ──
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n\n');
-      buffer = lines.pop() || '';
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          try {
-            const data = JSON.parse(line.slice(6)) as IndexingProgress;
-            onProgress(data);
-          } catch {
-            // Ignore partial JSON chunks
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const parsed: unknown = JSON.parse(line.slice(6));
+              if (
+                typeof parsed === 'object' &&
+                parsed !== null &&
+                'stage' in parsed &&
+                'message' in parsed &&
+                'progress' in parsed
+              ) {
+                const data = parsed as IndexingProgress & { repositoryId?: string };
+                if (data.repositoryId) {
+                  lastRepositoryId = data.repositoryId;
+                }
+                onProgress(data);
+              }
+            } catch {
+              // Ignore partial JSON chunks
+            }
           }
         }
       }
-    }
-  },
+    } catch (streamError) {
+      // ── Phase 2: Self-healing poll after stream disconnect ──
+      if (!lastRepositoryId) {
+        // Stream died before backend created the repo — cannot recover
+        throw streamError;
+      }
 
-  getStatus: async (repositoryId: string) => {
-    const response = await axiosInstance.get<ApiResponse<IndexingProgress>>(
-      `/indexing/status/${repositoryId}`
-    );
-    return response.data;
+      const MAX_POLL_ATTEMPTS = 90; // 90 × 4s = 6 minutes
+      const POLL_INTERVAL_MS = 4000;
+
+      for (let attempt = 1; attempt <= MAX_POLL_ATTEMPTS; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+
+        try {
+          const statusRes = await axiosInstance.get<
+            ApiResponse<{
+              id: string;
+              status: string;
+              totalFiles: number | null;
+              chunksCreated: number | null;
+            }>
+          >(`/indexing/status/${lastRepositoryId}`);
+
+          const job = statusRes.data.data;
+
+          if (!job) continue;
+
+          if (job.status === 'COMPLETED') {
+            onProgress({
+              stage: 'complete',
+              message: `Indexed ${job.totalFiles ?? 0} files (${job.chunksCreated ?? 0} chunks stored)`,
+              progress: 100,
+            } as IndexingProgress);
+            return; // ← Success, no error thrown
+          }
+
+          if (job.status === 'FAILED') {
+            throw new Error('Indexing job failed on the server');
+          }
+
+          // Still PROCESSING — send synthetic progress so the UI stays alive
+          const estimatedProgress = Math.min(95, 60 + attempt);
+          onProgress({
+            stage: 'embedding',
+            message: `Connection recovering… server still processing (attempt ${attempt})`,
+            progress: estimatedProgress,
+          } as IndexingProgress);
+        } catch (pollError) {
+          if (
+            pollError instanceof Error &&
+            pollError.message === 'Indexing job failed on the server'
+          ) {
+            throw pollError;
+          }
+          // Transient network glitch during poll — keep trying
+        }
+      }
+
+      throw new Error(
+        'Indexing is still running on the server but exceeded the polling timeout. Please refresh the page in a few minutes.'
+      );
+    }
   },
 };
 

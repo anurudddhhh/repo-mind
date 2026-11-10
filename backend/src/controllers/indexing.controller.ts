@@ -62,7 +62,7 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     }
   }, 5000);
 
-  const sendEvent = (data: {
+    const sendEvent = (data: {
     stage: string;
     message: string;
     progress: number;
@@ -70,7 +70,8 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     totalFiles?: number;
   }) => {
     if (!res.writableEnded) {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      const payload = repositoryId ? { ...data, repositoryId } : data;
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
     }
   };
 
