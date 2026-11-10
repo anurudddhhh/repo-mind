@@ -106,7 +106,7 @@ export const indexingApi = {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ githubUrl }),
+      body: JSON.stringify({ repoUrl: githubUrl, githubUrl }),
     });
 
     if (!response.ok) {
