@@ -79,6 +79,9 @@ export async function embedAndStoreChunks(
       }
 
       logger.debug(`🔢 [Embedding] Micro-batch complete: stored ${processed}/${chunks.length}`);
+
+      // Yield event loop for 100ms to let Node V8 GC sweep memory and let SSE keep-alive interval execute
+      await new Promise((resolve) => setTimeout(resolve, 100));
     } catch (error) {
       logger.error('❌ [Embedding] Micro-batch embedding failed', {
         batchStart: i,

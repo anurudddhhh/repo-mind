@@ -104,7 +104,7 @@ export default function DashboardPage() {
   const [indexingStatus, setIndexingStatus] = useState<IndexingProgress | null>(null);
   const [error, setError] = useState('');
 
-  // Ref to hold smooth-progress interval timer (Task 7)
+  // Ref to hold smooth-progress interval timer
   const connectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Custom Delete Modal State
@@ -180,7 +180,7 @@ export default function DashboardPage() {
       progress: 5,
     });
 
-    // Task 7 Polish: Start smooth stage progression while waiting for GitHub API response
+    // Smooth stage progression while waiting for initial response
     clearConnectionTimer();
     const connectionSteps = [
       { progress: 7, message: 'Requesting repository file tree...' },
@@ -205,7 +205,6 @@ export default function DashboardPage() {
 
     try {
       await indexingApi.startIndexing(repoUrl, (progressEvent) => {
-        // As soon as real backend progress reaches >= 10%, cancel simulated interval
         if (progressEvent.progress >= 10) {
           clearConnectionTimer();
         }
@@ -216,20 +215,22 @@ export default function DashboardPage() {
       await fetchRepositories();
       addToast('Repository indexed successfully!', 'success');
       setRepoUrl('');
-    } catch (err: unknown) {
+    } catch {
       clearConnectionTimer();
 
-      // Task 6 Multi-Attempt Resilience Loop (Container Reboot Aware):
-      // If stream socket disconnected mid-indexing, poll Neon DB 9 times over 36s (4s delay per attempt)
+      // Extended Resilience Polling Loop (Container Reboot & Micro-Batch Aware):
+      // Poll Neon DB 30 times over 120 seconds (4s interval) if stream disconnects
       if (targetFullName) {
-        setIndexingStatus({
-          stage: 'storing',
-          message: 'Finalizing database indexing state...',
-          progress: 95,
-        });
+        for (let attempt = 1; attempt <= 30; attempt++) {
+          const computedProgress = Math.min(98, 70 + Math.floor(attempt * 0.9));
+          setIndexingStatus({
+            stage: 'storing',
+            message: `Server processing embeddings… checking database state (${attempt}/30)`,
+            progress: computedProgress,
+          });
 
-        for (let attempt = 1; attempt <= 9; attempt++) {
           await new Promise((resolve) => setTimeout(resolve, 4000));
+
           try {
             const freshRepos = await repositoryApi.getRepositories();
             const indexedRepo = freshRepos.find(
@@ -244,12 +245,12 @@ export default function DashboardPage() {
               return;
             }
           } catch {
-            // Ignore temporary polling network glitches during server container cold-boot
+            // Ignore transient network errors while Render container reboots
           }
         }
       }
 
-      const errMessage = err instanceof Error ? err.message : 'Failed to index repository';
+      const errMessage = 'Indexing was started, but taking longer than expected. Please refresh in a moment.';
       setError(errMessage);
       addToast(errMessage, 'error');
     } finally {
