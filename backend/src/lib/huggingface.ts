@@ -58,8 +58,9 @@ export async function generateEmbedding(text: string): Promise<number[]> {
     const truncated = text.slice(0, 2000);
 
     const output = await pipe(truncated, { pooling: 'mean', normalize: true });
+    const result = Array.from(output.data);
 
-    return Array.from(output.data);
+    return result;
   } catch (error) {
     logger.error('❌ [Xenova] Single embedding generation failed', {
       error: error instanceof Error ? error.message : String(error),
@@ -86,17 +87,20 @@ export async function generateEmbeddings(
       const output = await pipe(batch, { pooling: 'mean', normalize: true });
 
       // Extract 384-dimensional slices from flat tensor array
-      const flatArray = Array.from(output.data);
+      const flatArray = Float32Array.from(output.data);
       for (let j = 0; j < batch.length; j++) {
         const start = j * 384;
         const end = start + 384;
-        allEmbeddings.push(flatArray.slice(start, end));
+        allEmbeddings.push(Array.from(flatArray.subarray(start, end)));
       }
 
       if (texts.length > batchSize) {
         const progress = Math.min(i + batchSize, texts.length);
         logger.debug(`🔢 [Xenova] Embedded micro-batch ${progress}/${texts.length} texts`);
       }
+
+      // Yield event loop & force GC pause between micro-batches to keep memory under 512 MB
+      await new Promise((resolve) => setTimeout(resolve, 50));
     } catch (error) {
       logger.error('❌ [Xenova] Micro-batch embedding failed', {
         batchStart: i,
