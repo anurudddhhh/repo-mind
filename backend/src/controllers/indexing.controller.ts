@@ -56,7 +56,6 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
   });
 
   // --- Send periodic SSE keep-alive heartbeat every 5 seconds ---
-  // Prevents Cloudflare / Render proxies from closing idle TCP sockets during long AI embeddings
   const keepAliveInterval = setInterval(() => {
     if (!res.writableEnded) {
       res.write(': keepalive\n\n');
@@ -84,33 +83,50 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     const github = createGitHubClient(user.accessToken);
     const repoInfo = await github.getRepoInfo(owner, cleanRepoName);
 
-    // --- Create or update Repository record ---
-    const repository = await prisma.repository.upsert({
+    // --- Find existing repository by githubRepoId OR (userId + fullName) ---
+    const existingRepo = await prisma.repository.findFirst({
       where: {
-        userId_fullName: {
-          userId: user.id,
-          fullName: repoInfo.fullName,
-        },
-      },
-      update: {
-        description: repoInfo.description,
-        isPrivate: repoInfo.isPrivate,
-        defaultBranch: repoInfo.defaultBranch,
-        indexingStatus: IndexingStatus.PROCESSING,
-      },
-      create: {
-        userId: user.id,
-        githubRepoId: BigInt(repoInfo.id),
-        owner: repoInfo.owner,
-        name: repoInfo.name,
-        fullName: repoInfo.fullName,
-        description: repoInfo.description,
-        isPrivate: repoInfo.isPrivate,
-        defaultBranch: repoInfo.defaultBranch,
-        cloneUrl: `https://github.com/${repoInfo.fullName}.git`,
-        indexingStatus: IndexingStatus.PROCESSING,
+        OR: [
+          { githubRepoId: BigInt(repoInfo.id) },
+          { userId: user.id, fullName: repoInfo.fullName },
+        ],
       },
     });
+
+    let repository;
+    if (existingRepo) {
+      // Reassign/update existing repository cleanly
+      repository = await prisma.repository.update({
+        where: { id: existingRepo.id },
+        data: {
+          userId: user.id,
+          owner: repoInfo.owner,
+          name: repoInfo.name,
+          fullName: repoInfo.fullName,
+          description: repoInfo.description,
+          isPrivate: repoInfo.isPrivate,
+          defaultBranch: repoInfo.defaultBranch,
+          cloneUrl: `https://github.com/${repoInfo.fullName}.git`,
+          indexingStatus: IndexingStatus.PROCESSING,
+        },
+      });
+    } else {
+      // Create new repository
+      repository = await prisma.repository.create({
+        data: {
+          userId: user.id,
+          githubRepoId: BigInt(repoInfo.id),
+          owner: repoInfo.owner,
+          name: repoInfo.name,
+          fullName: repoInfo.fullName,
+          description: repoInfo.description,
+          isPrivate: repoInfo.isPrivate,
+          defaultBranch: repoInfo.defaultBranch,
+          cloneUrl: `https://github.com/${repoInfo.fullName}.git`,
+          indexingStatus: IndexingStatus.PROCESSING,
+        },
+      });
+    }
 
     repositoryId = repository.id;
 
