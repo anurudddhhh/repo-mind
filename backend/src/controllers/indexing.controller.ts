@@ -1,7 +1,7 @@
 // Indexing Controller
-// Orchestrates the full repo indexing pipeline:
-// GitHub fetch → Filter binaries → AST semantic chunk → Save to Postgres → embed → store in Pinecone
-// Streams progress to the client via SSE with guaranteed database state updates and HTTP keep-alive heartbeat.
+// Orchestrates the streaming repo indexing pipeline:
+// GitHub fetch → Filter binaries → Micro-batched AST parse → Postgres insert → Pinecone embed → Memory flush
+// Memory safe for 512 MB RAM cloud environments (Render Free Tier).
 
 import type { Request, Response } from 'express';
 import '../types';
@@ -23,6 +23,9 @@ const IGNORED_PATHS = [
   'node_modules/', '.next/', 'dist/', 'build/', 'coverage/', '.git/',
   'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'
 ];
+
+// Number of source files processed per memory-flush iteration
+const FILE_BATCH_SIZE = 5;
 
 /**
  * POST /api/indexing/start
@@ -55,14 +58,14 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     'X-Accel-Buffering': 'no',
   });
 
-  // --- Send periodic SSE keep-alive heartbeat every 5 seconds ---
-  const keepAliveInterval = setInterval(() => {
-    if (!res.writableEnded) {
-      res.write(': keepalive\n\n');
-    }
-  }, 5000);
+  // Ensure headers are immediately flushed over HTTP
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
 
-    const sendEvent = (data: {
+  let repositoryId: string | null = null;
+
+  const sendEvent = (data: {
     stage: string;
     message: string;
     progress: number;
@@ -75,7 +78,15 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     }
   };
 
-  let repositoryId: string | null = null;
+  // Immediate keep-alive ping to open SSE socket
+  res.write(': ping\n\n');
+
+  // Send periodic SSE keep-alive heartbeat every 5 seconds
+  const keepAliveInterval = setInterval(() => {
+    if (!res.writableEnded) {
+      res.write(': keepalive\n\n');
+    }
+  }, 5000);
 
   try {
     // --- Stage 1: Fetch repo info from GitHub ---
@@ -84,7 +95,7 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     const github = createGitHubClient(user.accessToken);
     const repoInfo = await github.getRepoInfo(owner, cleanRepoName);
 
-    // --- Find existing repository by githubRepoId OR (userId + fullName) ---
+    // Find existing repository
     const existingRepo = await prisma.repository.findFirst({
       where: {
         OR: [
@@ -96,7 +107,6 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
 
     let repository;
     if (existingRepo) {
-      // Reassign/update existing repository cleanly
       repository = await prisma.repository.update({
         where: { id: existingRepo.id },
         data: {
@@ -112,7 +122,6 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
         },
       });
     } else {
-      // Create new repository
       repository = await prisma.repository.create({
         data: {
           userId: user.id,
@@ -131,7 +140,7 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
 
     repositoryId = repository.id;
 
-    // --- Create IndexingJob ---
+    // Create IndexingJob
     const job = await prisma.indexingJob.create({
       data: {
         repositoryId: repository.id,
@@ -144,7 +153,6 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     // --- Stage 2: Fetch all source files & filter binaries ---
     const rawFiles = await github.getRepositoryFiles(owner, cleanRepoName);
     
-    // Filter out binary/lock/build files
     const files = rawFiles.filter((f) => {
       const ext = f.path.split('.').pop()?.toLowerCase() || '';
       if (IGNORED_EXTENSIONS.has(ext)) return false;
@@ -155,7 +163,7 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
     sendEvent({
       stage: 'fetching',
       message: `Found ${files.length} indexable code files`,
-      progress: 25,
+      progress: 20,
       totalFiles: files.length,
     });
 
@@ -172,45 +180,64 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // --- Stage 3: Chunk files with AST ---
-    sendEvent({ stage: 'parsing', message: 'Parsing AST and chunking semantically...', progress: 35 });
-    
-    const chunks = await chunkRepositoryFiles(files, repository.id);
+    // --- Stage 3: Clear old repository vectors & database chunks ---
+    sendEvent({ stage: 'embedding', message: 'Preparing clean index state...', progress: 25 });
+    await deleteVectorsByRepository(repository.id).catch(() => {});
+    await prisma.codeChunk.deleteMany({ where: { repositoryId: repository.id } });
 
-    sendEvent({
-      stage: 'parsing',
-      message: `Created ${chunks.length} semantic chunks`,
-      progress: 50,
-    });
+    // --- Stage 4: Micro-batched File Parsing, DB Insertion & Embedding ---
+    let totalChunksCreated = 0;
+    let totalVectorsStored = 0;
 
-    // --- Stage 4: Clear old data (for re-indexing) ---
-    sendEvent({ stage: 'embedding', message: 'Clearing old data...', progress: 52 });
-    await deleteVectorsByRepository(repository.id).catch(() => {}); // Pinecone clear
-    await prisma.codeChunk.deleteMany({ where: { repositoryId: repository.id } }); // Postgres clear
+    for (let i = 0; i < files.length; i += FILE_BATCH_SIZE) {
+      const fileBatch = files.slice(i, i + FILE_BATCH_SIZE);
+      const processedFilesCount = Math.min(i + FILE_BATCH_SIZE, files.length);
 
-    // --- Stage 4.5: Save Chunks to PostgreSQL ---
-    sendEvent({ stage: 'storing', message: 'Saving parsed AST structures to database...', progress: 55 });
-    
-    const BATCH_SIZE = 500;
-    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
-      const batch = chunks.slice(i, i + BATCH_SIZE);
-      await prisma.codeChunk.createMany({
-        data: batch.map(chunk => ({
-          pineconeId: chunk.id,
-          repositoryId: repository.id,
-          filePath: chunk.filePath,
-          chunkType: chunk.chunkType as ChunkType,
-          name: chunk.name.substring(0, 250),
-          content: chunk.content,
-          startLine: chunk.startLine,
-          endLine: chunk.endLine,
-          language: chunk.language,
-          dependencies: chunk.dependencies || [],
-        }))
+      // Progress calculation: 25% -> 95%
+      const currentProgress = 25 + Math.round((processedFilesCount / files.length) * 70);
+
+      sendEvent({
+        stage: 'parsing',
+        message: `Processing files (${processedFilesCount}/${files.length})...`,
+        progress: currentProgress,
+        filesProcessed: processedFilesCount,
+        totalFiles: files.length,
       });
+
+      // Parse AST chunks for current batch only
+      const batchChunks = await chunkRepositoryFiles(fileBatch, repository.id);
+
+      if (batchChunks.length > 0) {
+        totalChunksCreated += batchChunks.length;
+
+        // 1. Store batch chunks in Postgres
+        await prisma.codeChunk.createMany({
+          data: batchChunks.map((chunk) => ({
+            pineconeId: chunk.id,
+            repositoryId: repository.id,
+            filePath: chunk.filePath,
+            chunkType: chunk.chunkType as ChunkType,
+            name: chunk.name.substring(0, 250),
+            content: chunk.content,
+            startLine: chunk.startLine,
+            endLine: chunk.endLine,
+            language: chunk.language,
+            dependencies: chunk.dependencies || [],
+          })),
+        });
+
+        // 2. Embed and store batch vectors in Pinecone
+        const storedBatchVectors = await embedAndStoreChunks(batchChunks);
+        totalVectorsStored += storedBatchVectors;
+      }
+
+      // Yield V8 event loop for 50ms so Garbage Collector reclaims memory between file batches
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
 
-    // Mark repository COMPLETED as soon as DB persistence finishes
+    // --- Stage 5: Finalize status in PostgreSQL ---
+    sendEvent({ stage: 'storing', message: 'Finalizing database state...', progress: 98 });
+
     await prisma.repository.update({
       where: { id: repository.id },
       data: {
@@ -219,52 +246,28 @@ export async function startIndexing(req: Request, res: Response): Promise<void> 
       },
     });
 
-    // --- Stage 5: Embed and store in Pinecone ---
-    sendEvent({ stage: 'embedding', message: 'Generating vector embeddings...', progress: 60 });
-
-    let storedCount = 0;
-    try {
-      storedCount = await embedAndStoreChunks(chunks, (processed, total) => {
-        const embeddingProgress = 60 + Math.round((processed / total) * 35);
-        sendEvent({
-          stage: 'embedding',
-          message: `Embedded ${processed}/${total} chunks`,
-          progress: embeddingProgress,
-          filesProcessed: processed,
-          totalFiles: total,
-        });
-      });
-    } catch (embedError) {
-      logger.warn('⚠️ [Indexing] Pinecone embedding had minor warning, continuing...', {
-        error: embedError instanceof Error ? embedError.message : String(embedError)
-      });
-    }
-
-    // --- Stage 6: Complete job ---
-    sendEvent({ stage: 'storing', message: 'Finalizing...', progress: 98 });
-
     await prisma.indexingJob.update({
       where: { id: job.id },
       data: {
         status: 'COMPLETED',
         completedAt: new Date(),
         totalFiles: files.length,
-        chunksCreated: chunks.length,
+        chunksCreated: totalChunksCreated,
       },
     });
 
     // --- Done ---
     sendEvent({
       stage: 'complete',
-      message: `Indexed ${files.length} files (${chunks.length} chunks stored)`,
+      message: `Indexed ${files.length} files (${totalChunksCreated} chunks stored)`,
       progress: 100,
     });
 
-    logger.info('✅ [Indexing] Repository indexed successfully', {
+    logger.info('✅ [Indexing] Repository streaming pipeline completed', {
       repoId: repository.id,
       files: files.length,
-      chunks: chunks.length,
-      vectors: storedCount,
+      chunks: totalChunksCreated,
+      vectors: totalVectorsStored,
     });
   } catch (error) {
     logger.error('❌ [Indexing] Pipeline failed', {

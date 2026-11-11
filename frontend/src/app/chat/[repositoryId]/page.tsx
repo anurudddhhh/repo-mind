@@ -18,7 +18,45 @@ mermaid.initialize({
   theme: 'neutral',
   securityLevel: 'loose',
   fontFamily: 'inherit',
+  suppressErrorRendering: true,
 });
+
+// ─── Mermaid Chart Sanitizer Helper ──────────────────────────────────────────
+
+function sanitizeMermaidChart(chart: string): string {
+  if (!chart) return '';
+
+  let clean = chart.trim();
+
+  // 1. Strip markdown code fences if present
+  clean = clean.replace(/```mermaid/gi, '').replace(/```/g, '').trim();
+
+  // 2. Ensure diagram header exists
+  if (!/^(graph|flowchart|sequenceDiagram|classDiagram|erDiagram|gantt|stateDiagram|pie)/i.test(clean)) {
+    clean = `graph TD\n${clean}`;
+  }
+
+  // 3. Fix unquoted edge pipe labels with parens or special chars:
+  // e.g. -->|HTTP Request (with token)| -> -->|"HTTP Request (with token)"|
+  clean = clean.replace(/-->\|([^|"]+)\|/g, (_, label) => {
+    const safeLabel = label.replace(/"/g, "'");
+    return `-->|"${safeLabel}"|`;
+  });
+
+  // 4. Quote unquoted node labels: ID[Label with (special) / chars] -> ID["Label with (special) / chars"]
+  clean = clean.replace(/([a-zA-Z0-9_]+)\[(?!\")([^\]]+)\]/g, (_, id, label) => {
+    const safeLabel = label.replace(/"/g, "'");
+    return `${id}["${safeLabel}"]`;
+  });
+
+  // 5. Remove trailing semicolons
+  clean = clean
+    .split('\n')
+    .map((line) => line.trim().replace(/;$/, ''))
+    .join('\n');
+
+  return clean;
+}
 
 // ─── Local UI Message Type ───────────────────────────────────────────────────
 
@@ -95,16 +133,20 @@ function MermaidDiagram({ chart }: { chart: string }) {
 
     const renderDiagram = async () => {
       try {
+        const sanitized = sanitizeMermaidChart(chart);
         const id = `mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const { svg } = await mermaid.render(id, chart);
+        const { svg } = await mermaid.render(id, sanitized);
+
         if (containerRef.current) {
           containerRef.current.innerHTML = svg;
         }
       } catch {
         if (containerRef.current) {
           containerRef.current.innerHTML =
-            '<p class="text-amber-600 text-xs">⚠️ Diagram rendering fallback shown below.</p>' +
-            `<pre class="text-xs text-gray-500 mt-2 overflow-x-auto">${chart}</pre>`;
+            '<div className="text-left font-mono text-xs text-amber-600 dark:text-amber-400 space-y-1">' +
+            '<p className="font-sans font-semibold">⚠️ Architecture Flowchart Code Preview:</p>' +
+            `<pre className="p-3 bg-gray-100 dark:bg-zinc-800 rounded-xl overflow-x-auto text-gray-800 dark:text-zinc-200">${chart}</pre>` +
+            '</div>';
         }
       }
     };
