@@ -28,15 +28,17 @@ export interface User {
 export interface Repository {
   id: string;
   userId: string;
-  githubRepoId: number;
+  githubRepoId: number | string;
   owner: string;
   name: string;
   fullName: string;
   description: string | null;
   isPrivate: boolean;
   defaultBranch: string;
-  isIndexed: boolean;
-  indexedAt: string | null;
+  isIndexed?: boolean;
+  indexingStatus?: 'PROCESSING' | 'COMPLETED' | 'FAILED' | string;
+  indexedAt?: string | null;
+  lastIndexedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
