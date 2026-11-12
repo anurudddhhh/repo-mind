@@ -30,7 +30,7 @@ import { useToast } from '@/components/Toast';
 import { DeleteModal } from '@/components/DeleteModal';
 
 // ─────────────────────────────────────────────────────────
-// Feature quick-action definition (one card row per repo)
+// Feature quick-action definition
 // ─────────────────────────────────────────────────────────
 interface FeatureAction {
   id: string;
@@ -104,7 +104,6 @@ export default function DashboardPage() {
   const [indexingStatus, setIndexingStatus] = useState<IndexingProgress | null>(null);
   const [error, setError] = useState('');
 
-  // Ref to hold smooth-progress interval timer
   const connectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Custom Delete Modal State
@@ -166,21 +165,18 @@ export default function DashboardPage() {
       return;
     }
 
-    // Extract target repo full name for resilience matching
     const match = repoUrl.match(/github\.com\/([^/]+)\/([^/\s#?]+)/);
     const targetFullName = match ? `${match[1]}/${match[2].replace(/\.git$/, '')}`.toLowerCase() : '';
 
     setError('');
     setIsIndexing(true);
 
-    // Initial Stage: 5% (Connecting)
     setIndexingStatus({
       stage: 'fetching',
       message: 'Connecting to GitHub API...',
       progress: 5,
     });
 
-    // Smooth stage progression while waiting for initial response
     clearConnectionTimer();
     const connectionSteps = [
       { progress: 7, message: 'Requesting repository file tree...' },
@@ -203,12 +199,17 @@ export default function DashboardPage() {
       }
     }, 1200);
 
+    let streamSucceeded = false;
+
     try {
       await indexingApi.startIndexing(repoUrl, (progressEvent) => {
         if (progressEvent.progress >= 10) {
           clearConnectionTimer();
         }
         setIndexingStatus(progressEvent);
+        if (progressEvent.stage === 'complete' || progressEvent.progress === 100) {
+          streamSucceeded = true;
+        }
       });
 
       clearConnectionTimer();
@@ -218,14 +219,13 @@ export default function DashboardPage() {
     } catch {
       clearConnectionTimer();
 
-      // Extended Resilience Polling Loop (Container Reboot & Micro-Batch Aware):
-      // Poll Neon DB 30 times over 120 seconds (4s interval) if stream disconnects
-      if (targetFullName) {
+      // Extended Polling Loop: Wait strictly for indexingStatus === 'COMPLETED'
+      if (targetFullName && !streamSucceeded) {
         for (let attempt = 1; attempt <= 30; attempt++) {
           const computedProgress = Math.min(98, 70 + Math.floor(attempt * 0.9));
           setIndexingStatus({
             stage: 'storing',
-            message: `Server processing embeddings… checking database state (${attempt}/30)`,
+            message: `Finalizing vector indexing in background (${attempt}/30)...`,
             progress: computedProgress,
           });
 
@@ -237,7 +237,8 @@ export default function DashboardPage() {
               (r) => r.fullName.toLowerCase() === targetFullName
             );
 
-            if (indexedRepo && (indexedRepo.isIndexed || Boolean(indexedRepo.indexedAt) || Boolean(indexedRepo.id))) {
+            // Strictly check database enum field indexingStatus === 'COMPLETED'
+            if (indexedRepo && indexedRepo.indexingStatus === 'COMPLETED') {
               setRepositories(freshRepos);
               addToast('Repository indexed successfully!', 'success');
               setRepoUrl('');
@@ -245,14 +246,24 @@ export default function DashboardPage() {
               return;
             }
           } catch {
-            // Ignore transient network errors while Render container reboots
+            // Ignore transient network errors
           }
         }
       }
 
-      const errMessage = 'Indexing was started, but taking longer than expected. Please refresh in a moment.';
-      setError(errMessage);
-      addToast(errMessage, 'error');
+      // If finished, refresh list anyway
+      const freshRepos = await fetchRepositories();
+      const isDone = freshRepos.some(r => r.fullName.toLowerCase() === targetFullName && r.indexingStatus === 'COMPLETED');
+
+      if (isDone) {
+        addToast('Repository indexed successfully!', 'success');
+        setRepoUrl('');
+        setError('');
+      } else {
+        const errMessage = 'Indexing was started. It will appear on your dashboard once complete.';
+        setError(errMessage);
+        addToast(errMessage, 'error');
+      }
     } finally {
       clearConnectionTimer();
       setIsIndexing(false);
@@ -497,9 +508,13 @@ export default function DashboardPage() {
                     )}
 
                     <div className="flex items-center gap-2 pt-1 flex-wrap">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-border text-foreground">
-                        <CheckCircle2 size={12} className="text-success" />
-                        Indexed
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        repo.indexingStatus === 'COMPLETED'
+                          ? 'bg-border text-foreground'
+                          : 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                      }`}>
+                        <CheckCircle2 size={12} className={repo.indexingStatus === 'COMPLETED' ? 'text-success' : 'text-amber-500'} />
+                        {repo.indexingStatus === 'COMPLETED' ? 'Indexed' : 'Processing...'}
                       </span>
                       {repo.defaultBranch && (
                         <span className="text-xs text-foreground-muted">
@@ -512,7 +527,6 @@ export default function DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Delete only in header */}
                   <button
                     onClick={() => handleOpenDeleteModal(repo.id, repo.fullName)}
                     className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-foreground-muted transition-colors hover:bg-error/10 hover:text-error flex-shrink-0 self-start"
@@ -522,7 +536,7 @@ export default function DashboardPage() {
                   </button>
                 </div>
 
-                {/* ── Unbundled feature quick-actions ── */}
+                {/* Quick actions */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                   {FEATURE_ACTIONS.map((action) => {
                     const Icon = action.icon;
