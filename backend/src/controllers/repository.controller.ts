@@ -1,11 +1,13 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma';
 import { logger } from '../lib/logger';
+import { deleteVectorsByRepository } from '../lib/pinecone';
+import { IndexingStatus } from '@prisma/client';
 import '../types';
 
 /**
  * GET /api/repositories
- * Returns all repositories indexed by the current user.
+ * Returns all repositories for the current user with strict IndexingJob validation.
  */
 export async function getRepositories(req: Request, res: Response): Promise<void> {
   try {
@@ -15,15 +17,59 @@ export async function getRepositories(req: Request, res: Response): Promise<void
       where: {
         userId: user.id,
       },
+      include: {
+        indexingJobs: {
+          orderBy: { startedAt: 'desc' },
+          take: 1,
+        },
+      },
       orderBy: {
-        lastIndexedAt: 'desc',
+        createdAt: 'desc',
       },
     });
 
-    const safeRepositories = repositories.map(repo => ({
-      ...repo,
-      githubRepoId: repo.githubRepoId.toString(),
-    }));
+    const TEN_MINUTES_AGO = new Date(Date.now() - 10 * 60 * 1000);
+
+    const safeRepositories = await Promise.all(
+      repositories.map(async (repo) => {
+        let status = repo.indexingStatus;
+        const latestJob = repo.indexingJobs[0];
+
+        if (status === IndexingStatus.PROCESSING && latestJob) {
+          // Case 1: Job actually finished completely
+          if (latestJob.status === 'COMPLETED') {
+            status = IndexingStatus.COMPLETED;
+            prisma.repository
+              .update({
+                where: { id: repo.id },
+                data: {
+                  indexingStatus: IndexingStatus.COMPLETED,
+                  lastIndexedAt: latestJob.completedAt || new Date(),
+                },
+              })
+              .catch(() => {});
+          } 
+          // Case 2: Job crashed or timed out (>10 minutes ago)
+          else if (latestJob.startedAt < TEN_MINUTES_AGO) {
+            status = IndexingStatus.FAILED;
+            prisma.repository
+              .update({
+                where: { id: repo.id },
+                data: { indexingStatus: IndexingStatus.FAILED },
+              })
+              .catch(() => {});
+          }
+        }
+
+        const { indexingJobs, ...repoData } = repo;
+
+        return {
+          ...repoData,
+          indexingStatus: status,
+          githubRepoId: repo.githubRepoId.toString(),
+        };
+      })
+    );
 
     res.json({
       success: true,
@@ -45,8 +91,6 @@ export async function getRepositories(req: Request, res: Response): Promise<void
  * DELETE /api/repositories/:id
  * Deletes a repository and its associated vectors.
  */
-import { deleteVectorsByRepository } from '../lib/pinecone';
-
 export async function deleteRepository(req: Request, res: Response): Promise<void> {
   try {
     const user = req.user!;
