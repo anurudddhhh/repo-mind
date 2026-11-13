@@ -77,11 +77,13 @@ export const authApi = {
   },
 };
 
-// ─── Repository API ──────────────────────────────────────────────────────────
+// ─── Repository API (Cache-Busted) ───────────────────────────────────────────
 
 export const repositoryApi = {
   getRepositories: async (): Promise<Repository[]> => {
-    const response = await axiosInstance.get<ApiResponse<Repository[]>>('/repositories');
+    const response = await axiosInstance.get<ApiResponse<Repository[]>>('/repositories', {
+      params: { _t: Date.now() },
+    });
     return response.data.data ?? [];
   },
   deleteRepository: async (id: string) => {
@@ -93,7 +95,7 @@ export const repositoryApi = {
 // ─── Indexing API ────────────────────────────────────────────────────────────
 
 export const indexingApi = {
-    startIndexing: async (
+  startIndexing: async (
     githubUrl: string,
     onProgress: (progress: IndexingProgress) => void
   ) => {
@@ -128,7 +130,6 @@ export const indexingApi = {
     let buffer = '';
     let lastRepositoryId: string | null = null;
 
-    // ── Phase 1: Read SSE stream ──
     try {
       while (true) {
         const { done, value } = await reader.read();
@@ -162,13 +163,11 @@ export const indexingApi = {
         }
       }
     } catch (streamError) {
-      // ── Phase 2: Self-healing poll after stream disconnect ──
       if (!lastRepositoryId) {
-        // Stream died before backend created the repo — cannot recover
         throw streamError;
       }
 
-      const MAX_POLL_ATTEMPTS = 90; // 90 × 4s = 6 minutes
+      const MAX_POLL_ATTEMPTS = 90;
       const POLL_INTERVAL_MS = 4000;
 
       for (let attempt = 1; attempt <= MAX_POLL_ATTEMPTS; attempt++) {
@@ -194,14 +193,13 @@ export const indexingApi = {
               message: `Indexed ${job.totalFiles ?? 0} files (${job.chunksCreated ?? 0} chunks stored)`,
               progress: 100,
             } as IndexingProgress);
-            return; // ← Success, no error thrown
+            return;
           }
 
           if (job.status === 'FAILED') {
             throw new Error('Indexing job failed on the server');
           }
 
-          // Still PROCESSING — send synthetic progress so the UI stays alive
           const estimatedProgress = Math.min(95, 60 + attempt);
           onProgress({
             stage: 'embedding',
@@ -215,7 +213,6 @@ export const indexingApi = {
           ) {
             throw pollError;
           }
-          // Transient network glitch during poll — keep trying
         }
       }
 
@@ -223,6 +220,13 @@ export const indexingApi = {
         'Indexing is still running on the server but exceeded the polling timeout. Please refresh the page in a few minutes.'
       );
     }
+  },
+
+  getStatus: async (repositoryId: string) => {
+    const response = await axiosInstance.get<ApiResponse<IndexingProgress>>(
+      `/indexing/status/${repositoryId}`
+    );
+    return response.data;
   },
 };
 
@@ -264,7 +268,7 @@ export const searchApi = {
   },
 };
 
-// ─── Chat API (With Citations Support) ───────────────────────────────────────
+// ─── Chat API ────────────────────────────────────────────────────────────────
 
 export const chatApi = {
   streamChat: async (
@@ -394,7 +398,7 @@ export const analysisApi = {
   ): Promise<ArchitectureSummary | null> => {
     const response = await axiosInstance.get<ApiResponse<ArchitectureSummary>>(
       `/analyze/${repositoryId}/architecture`,
-      { params: { forceRefresh } }
+      { params: { forceRefresh, _t: Date.now() } }
     );
     return response.data.data ?? null;
   },
@@ -445,7 +449,7 @@ export const analysisApi = {
   ): Promise<CommitAnalysis | null> => {
     const response = await axiosInstance.get<ApiResponse<CommitAnalysis>>(
       `/analyze/${repositoryId}/commits`,
-      { params: { forceRefresh } }
+      { params: { forceRefresh, _t: Date.now() } }
     );
     return response.data.data ?? null;
   },

@@ -7,17 +7,26 @@ import '../types';
 
 /**
  * GET /api/repositories
- * Returns all repositories for the current user with strict IndexingJob validation.
+ * Returns all repositories for the current user with cache-busting headers
+ * and automatic status reconciliation.
  */
 export async function getRepositories(req: Request, res: Response): Promise<void> {
   try {
     const user = req.user!;
+
+    // Strictly prevent HTTP 304 browser/proxy caching
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     
     const repositories = await prisma.repository.findMany({
       where: {
         userId: user.id,
       },
       include: {
+        _count: {
+          select: { codeChunks: true },
+        },
         indexingJobs: {
           orderBy: { startedAt: 'desc' },
           take: 1,
@@ -28,40 +37,38 @@ export async function getRepositories(req: Request, res: Response): Promise<void
       },
     });
 
-    const TEN_MINUTES_AGO = new Date(Date.now() - 10 * 60 * 1000);
+    const THIRTY_SECONDS_AGO = new Date(Date.now() - 30 * 1000);
 
     const safeRepositories = await Promise.all(
       repositories.map(async (repo) => {
         let status = repo.indexingStatus;
         const latestJob = repo.indexingJobs[0];
+        const chunkCount = repo._count.codeChunks;
 
-        if (status === IndexingStatus.PROCESSING && latestJob) {
-          // Case 1: Job actually finished completely
-          if (latestJob.status === 'COMPLETED') {
-            status = IndexingStatus.COMPLETED;
-            prisma.repository
-              .update({
-                where: { id: repo.id },
-                data: {
-                  indexingStatus: IndexingStatus.COMPLETED,
-                  lastIndexedAt: latestJob.completedAt || new Date(),
-                },
-              })
-              .catch(() => {});
-          } 
-          // Case 2: Job crashed or timed out (>10 minutes ago)
-          else if (latestJob.startedAt < TEN_MINUTES_AGO) {
-            status = IndexingStatus.FAILED;
-            prisma.repository
-              .update({
-                where: { id: repo.id },
-                data: { indexingStatus: IndexingStatus.FAILED },
-              })
-              .catch(() => {});
+        if (status === IndexingStatus.PROCESSING) {
+          // Condition 1: Job explicitly completed
+          if (latestJob?.status === 'COMPLETED' || chunkCount > 0) {
+            // Check if there is a job actively started in the last 30 seconds
+            const isActivelyStreaming = latestJob && latestJob.startedAt > THIRTY_SECONDS_AGO && latestJob.status === 'PROCESSING';
+
+            if (!isActivelyStreaming && chunkCount > 0) {
+              status = IndexingStatus.COMPLETED;
+
+              // Async update DB flag to COMPLETED
+              prisma.repository
+                .update({
+                  where: { id: repo.id },
+                  data: {
+                    indexingStatus: IndexingStatus.COMPLETED,
+                    lastIndexedAt: new Date(),
+                  },
+                })
+                .catch(() => {});
+            }
           }
         }
 
-        const { indexingJobs, ...repoData } = repo;
+        const { indexingJobs, _count, ...repoData } = repo;
 
         return {
           ...repoData,
