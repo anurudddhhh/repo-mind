@@ -38,6 +38,8 @@ const NOISE_FILE_PATTERNS: RegExp[] = [
   /(^|\/)readme(\.mdx?|\.txt)?$/i,
   /(^|\/)package\.json$/i,
   /(^|\/)package-lock\.json$/i,
+  /(^|\/)yarn\.lock$/i,
+  /(^|\/)pnpm-lock\.ya?ml$/i,
   /(^|\/)tsconfig.*\.json$/i,
   /(^|\/)\.env(\.\w+)?$/i,
   /(^|\/)render\.ya?ml$/i,
@@ -89,9 +91,26 @@ const RRF_K = 60;
 
 /**
  * Check if a file path matches any noise pattern.
+ * Filters out stylesheets (.css, .scss, .less) and static HTML templates
+ * unless the query explicitly asks for styling, UI design, or markup.
  */
-function isNoiseFile(filePath: string): boolean {
-  return NOISE_FILE_PATTERNS.some((pattern) => pattern.test(filePath));
+function isNoiseFile(filePath: string, query?: string): boolean {
+  if (NOISE_FILE_PATTERNS.some((pattern) => pattern.test(filePath))) {
+    return true;
+  }
+
+  // Filter out stylesheets and static HTML unless query specifically asks about styling/markup
+  const hasStylingIntent = Boolean(
+    query && /css|scss|sass|less|style|styling|theme|color|font|html|markup/i.test(query)
+  );
+
+  if (!hasStylingIntent) {
+    if (/\.(css|scss|sass|less)$/i.test(filePath)) return true;
+    if (/(^|\/)(public\/)?index\.html$/i.test(filePath)) return true;
+    if (/(^|\/)favicon\./i.test(filePath)) return true;
+  }
+
+  return false;
 }
 
 /**
@@ -238,7 +257,7 @@ export async function searchRepository(
       const matches = await queryVectors(queryEmbedding, topK * 3, { repositoryId });
 
       vectorResults = matches
-        .filter((match) => !isNoiseFile(match.metadata.filePath))
+        .filter((match) => (match.score === undefined || match.score >= 0.25) && !isNoiseFile(match.metadata.filePath, query))
         .map((match) => ({
           score: match.score,
           filePath: match.metadata.filePath,
@@ -283,7 +302,7 @@ export async function searchRepository(
 
       // Score, filter noise, boost source files, and sort
       keywordResults = dbChunks
-        .filter((chunk) => !isNoiseFile(chunk.filePath))
+        .filter((chunk) => !isNoiseFile(chunk.filePath, query))
         .map((chunk) => {
           const keywordScore = scoreChunkAgainstKeywords(chunk, keywords);
           const sourceBoost = isSourceFile(chunk.filePath) ? 1.2 : 1.0;
@@ -338,16 +357,19 @@ export async function searchRepository(
     try {
       const fallbackChunks = await prisma.codeChunk.findMany({
         where: { repositoryId },
-        take: topK,
+        take: topK * 3,
       });
-      finalResults = fallbackChunks.map((c) => ({
-        score: 0.1,
-        filePath: c.filePath,
-        startLine: c.startLine,
-        endLine: c.endLine,
-        language: c.language,
-        content: c.content,
-      }));
+      finalResults = fallbackChunks
+        .filter((c) => !isNoiseFile(c.filePath, query))
+        .slice(0, topK)
+        .map((c) => ({
+          score: 0.1,
+          filePath: c.filePath,
+          startLine: c.startLine,
+          endLine: c.endLine,
+          language: c.language,
+          content: c.content,
+        }));
     } catch {
       finalResults = [];
     }

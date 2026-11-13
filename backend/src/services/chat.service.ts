@@ -244,8 +244,11 @@ CITATION INSTRUCTIONS (CRITICAL):
 5. When you reference or describe logic from a specific numbered snippet above, you MUST include the reference number in square brackets immediately after the relevant statement.
    Example: "The OAuth callback exchanges the authorization code for an access token [1] and then generates a JWT [2]."
 6. Use the exact format [1], [2], [3] etc. matching the snippet numbers above.
-7. Cite at least one source for every factual claim about the codebase. If you are unsure which snippet supports a claim, cite the most relevant one.
-8. Do NOT fabricate reference numbers that do not exist in the numbered context above.
+7. Distribute citations accurately across snippets:
+   - When discussing different files, endpoints, or architectural components, cite the specific snippet(s) that implement that logic (e.g. cite [1] for the backend route and [2] for the corresponding frontend caller).
+   - Cite each relevant source once per conceptual point or section; do NOT repetitively append the same citation number (e.g. [1]) to every single sentence.
+   - If multiple snippets support a point, you may cite them together (e.g. [1][2] or [1, 2]).
+8. Do NOT fabricate reference numbers that do not exist in the numbered context above. Only cite snippets that genuinely support the statement.
 ${
   diagramIncluded
     ? '9. An interactive Mermaid.js diagram has already been generated above. Provide a concise textual explanation walking through the visual flow.'

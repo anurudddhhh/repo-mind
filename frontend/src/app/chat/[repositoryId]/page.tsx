@@ -2,24 +2,14 @@
 
 import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { ArrowLeft, Send, MessageSquare, Terminal } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import mermaid from 'mermaid';
 import { chatApi, repositoryApi, type CitationEntry } from '@/services/api';
 import { useAuthStore } from '@/store/useAuthStore';
 import { Repository } from '@/types';
-
-// ─── Mermaid Initialization ──────────────────────────────────────────────────
-
-mermaid.initialize({
-  startOnLoad: false,
-  theme: 'neutral',
-  securityLevel: 'loose',
-  fontFamily: 'inherit',
-  suppressErrorRendering: true,
-});
 
 // ─── Mermaid Chart Sanitizer Helper ──────────────────────────────────────────
 
@@ -106,58 +96,119 @@ function renderTextWithCitations(
   text: string,
   citations: Record<number, CitationEntry>
 ): ReactNode {
-  const parts = text.split(/(\[\d+\])/g);
+  // Matches [1], [2], [1, 2], [1,2,3], [1][2]
+  const citationRegex = /(\[\d+(?:\s*,\s*\d+)*\])/g;
+  const parts = text.split(citationRegex);
 
   if (parts.length === 1) return text;
 
   return parts.map((part, index) => {
-    const match = part.match(/^\[(\d+)\]$/);
+    const match = part.match(/^\[([\d\s,]+)\]$/);
     if (match) {
-      const ref = parseInt(match[1], 10);
-      const entry = citations[ref];
-      if (entry) {
-        return <CitationBadge key={index} entry={entry} />;
+      const numbers = match[1]
+        .split(',')
+        .map((n) => parseInt(n.trim(), 10))
+        .filter((n) => !isNaN(n));
+
+      const validBadges = numbers
+        .map((num) => citations[num])
+        .filter((entry): entry is CitationEntry => Boolean(entry));
+
+      if (validBadges.length > 0) {
+        return (
+          <span key={index} className="inline-flex items-center gap-0.5 mx-0.5">
+            {validBadges.map((entry) => (
+              <CitationBadge key={entry.ref} entry={entry} />
+            ))}
+          </span>
+        );
       }
     }
     return part;
   });
 }
 
+function renderWithCitations(
+  children: ReactNode,
+  citations: Record<number, CitationEntry>
+): ReactNode {
+  if (typeof children === 'string') {
+    return renderTextWithCitations(children, citations);
+  }
+  if (Array.isArray(children)) {
+    return children.map((child, i) => (
+      <span key={i}>{renderWithCitations(child, citations)}</span>
+    ));
+  }
+  return children;
+}
+
 // ─── Mermaid Diagram Component ───────────────────────────────────────────────
 
 function MermaidDiagram({ chart }: { chart: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [svg, setSvg] = useState<string>('');
+  const [errorFallback, setErrorFallback] = useState<string>('');
 
   useEffect(() => {
-    if (!containerRef.current || !chart) return;
+    let isMounted = true;
+    if (!chart) return;
 
     const renderDiagram = async () => {
       try {
+        const mermaid = (await import('mermaid')).default;
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: 'neutral',
+          securityLevel: 'loose',
+          fontFamily: 'inherit',
+          suppressErrorRendering: true,
+        });
+
         const sanitized = sanitizeMermaidChart(chart);
         const id = `mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const { svg } = await mermaid.render(id, sanitized);
+        const { svg: renderedSvg } = await mermaid.render(id, sanitized);
 
-        if (containerRef.current) {
-          containerRef.current.innerHTML = svg;
+        if (isMounted) {
+          setSvg(renderedSvg);
         }
       } catch {
-        if (containerRef.current) {
-          containerRef.current.innerHTML =
-            '<div className="text-left font-mono text-xs text-amber-600 dark:text-amber-400 space-y-1">' +
-            '<p className="font-sans font-semibold">⚠️ Architecture Flowchart Code Preview:</p>' +
-            `<pre className="p-3 bg-gray-100 dark:bg-zinc-800 rounded-xl overflow-x-auto text-gray-800 dark:text-zinc-200">${chart}</pre>` +
-            '</div>';
+        if (isMounted) {
+          setErrorFallback(chart);
         }
       }
     };
 
     renderDiagram();
+    return () => {
+      isMounted = false;
+    };
   }, [chart]);
+
+  if (errorFallback) {
+    return (
+      <div className="my-4 p-4 bg-gray-100 dark:bg-zinc-800 rounded-xl text-left font-mono text-xs text-amber-600 dark:text-amber-400 space-y-1">
+        <p className="font-sans font-semibold">⚠️ Architecture Flowchart Code Preview:</p>
+        <pre className="p-3 bg-gray-50 dark:bg-zinc-900 rounded-lg overflow-x-auto text-gray-800 dark:text-zinc-200">
+          {errorFallback}
+        </pre>
+      </div>
+    );
+  }
+
+  if (!svg) {
+    return (
+      <div className="my-4 p-4 bg-white dark:bg-zinc-900 rounded-2xl border border-gray-200 dark:border-zinc-800 flex justify-center items-center text-xs text-gray-400 animate-pulse">
+        Rendering diagram...
+      </div>
+    );
+  }
 
   return (
     <div
       ref={containerRef}
-      className="my-4 p-4 bg-white dark:bg-zinc-900 rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-x-auto flex justify-center shadow-sm"
+      className="my-4 p-4 bg-white dark:bg-zinc-900 rounded-2xl border border-gray-200 dark:border-zinc-800 overflow-x-auto flex justify-center shadow-sm [&>svg]:max-w-full [&>svg]:h-auto"
+      dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
 }
@@ -309,13 +360,14 @@ export default function ChatPage() {
       {/* ── Top Header ── */}
       <header className="flex items-center justify-between px-6 py-3.5 border-b border-gray-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md sticky top-0 z-30">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push(`/repositories/${repositoryId}`)}
+          <Link
+            href={`/repositories/${repositoryId}`}
+            prefetch={true}
             className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 dark:text-zinc-400 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-zinc-800 transition-all"
             title="Back to repository"
           >
             <ArrowLeft size={18} />
-          </button>
+          </Link>
           <div className="flex flex-col">
             <h1 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
               <span>{repo ? repo.fullName : repositoryId}</span>
@@ -412,41 +464,43 @@ export default function ChatPage() {
                         p({ children }) {
                           return (
                             <p className="mb-3 leading-relaxed">
-                              {Array.isArray(children)
-                                ? children.map((child, i) => {
-                                    if (typeof child === 'string') {
-                                      return (
-                                        <span key={i}>
-                                          {renderTextWithCitations(child, citations)}
-                                        </span>
-                                      );
-                                    }
-                                    return <span key={i}>{child}</span>;
-                                  })
-                                : typeof children === 'string'
-                                  ? renderTextWithCitations(children, citations)
-                                  : children}
+                              {renderWithCitations(children, citations)}
                             </p>
                           );
                         },
                         li({ children }) {
                           return (
                             <li className="mb-1">
-                              {Array.isArray(children)
-                                ? children.map((child, i) => {
-                                    if (typeof child === 'string') {
-                                      return (
-                                        <span key={i}>
-                                          {renderTextWithCitations(child, citations)}
-                                        </span>
-                                      );
-                                    }
-                                    return <span key={i}>{child}</span>;
-                                  })
-                                : typeof children === 'string'
-                                  ? renderTextWithCitations(children, citations)
-                                  : children}
+                              {renderWithCitations(children, citations)}
                             </li>
+                          );
+                        },
+                        h1({ children }) {
+                          return (
+                            <h1 className="text-base font-bold mt-4 mb-2">
+                              {renderWithCitations(children, citations)}
+                            </h1>
+                          );
+                        },
+                        h2({ children }) {
+                          return (
+                            <h2 className="text-sm font-bold mt-3 mb-1.5">
+                              {renderWithCitations(children, citations)}
+                            </h2>
+                          );
+                        },
+                        h3({ children }) {
+                          return (
+                            <h3 className="text-xs font-bold uppercase tracking-wider mt-2.5 mb-1 text-gray-500 dark:text-zinc-400">
+                              {renderWithCitations(children, citations)}
+                            </h3>
+                          );
+                        },
+                        strong({ children }) {
+                          return (
+                            <strong className="font-semibold text-gray-900 dark:text-white">
+                              {renderWithCitations(children, citations)}
+                            </strong>
                           );
                         },
                       }}
@@ -483,16 +537,37 @@ export default function ChatPage() {
           <div className="flex flex-wrap gap-2">
             {Object.values(citations).map((c) => {
               const shortPath = c.filePath.split('/').slice(-2).join('/');
+              const isCited = messages.some(
+                (m) =>
+                  m.role === 'assistant' &&
+                  (m.content.includes(`[${c.ref}]`) ||
+                    new RegExp(`\\[[\\d,\\s]*${c.ref}[\\d,\\s]*\\]`).test(m.content))
+              );
               return (
                 <span
                   key={c.ref}
-                  className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 text-xs text-gray-700 dark:text-zinc-300 font-medium"
+                  className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                    isCited
+                      ? 'bg-blue-50/80 dark:bg-blue-950/40 border-blue-200 dark:border-blue-850 text-blue-900 dark:text-blue-200 shadow-sm'
+                      : 'bg-gray-100/70 dark:bg-zinc-850/60 border-gray-200 dark:border-zinc-750 text-gray-500 dark:text-zinc-400 opacity-75'
+                  }`}
                 >
-                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-500/20 text-blue-600 dark:text-blue-400 text-[10px] font-bold">
+                  <span
+                    className={`inline-flex items-center justify-center w-4 h-4 rounded-full text-[10px] font-bold ${
+                      isCited
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 dark:bg-zinc-700 text-gray-600 dark:text-zinc-400'
+                    }`}
+                  >
                     {c.ref}
                   </span>
                   <span className="font-mono">{shortPath}</span>
                   <span className="text-gray-400">:{c.startLine}</span>
+                  {isCited && (
+                    <span className="text-[9px] uppercase tracking-wider font-semibold text-blue-600 dark:text-blue-400 ml-0.5">
+                      cited
+                    </span>
+                  )}
                 </span>
               );
             })}

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   LogOut,
   Search,
@@ -213,7 +214,23 @@ export default function DashboardPage() {
       });
 
       clearConnectionTimer();
-      await fetchRepositories();
+
+      // Ensure fresh database read: Neon connection pooling (PgBouncer) or replication
+      // delay can take 200-800ms before getRepositories() returns the newly committed repository.
+      let reposList: Repository[] = [];
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        reposList = await fetchRepositories();
+        const found = targetFullName && reposList.some(
+          (r) => r.fullName.toLowerCase() === targetFullName && r.indexingStatus === 'COMPLETED'
+        );
+        if (found) {
+          break;
+        }
+        if (attempt < 5) {
+          await new Promise((res) => setTimeout(res, 600));
+        }
+      }
+
       addToast('Repository indexed successfully!', 'success');
       setRepoUrl('');
     } catch {
@@ -541,10 +558,10 @@ export default function DashboardPage() {
                   {FEATURE_ACTIONS.map((action) => {
                     const Icon = action.icon;
                     return (
-                      <button
+                      <Link
                         key={action.id}
-                        type="button"
-                        onClick={() => router.push(action.getHref(repo.id))}
+                        href={action.getHref(repo.id)}
+                        prefetch={true}
                         className={`flex flex-col items-start gap-1.5 p-3 rounded-xl border border-border bg-background/60 text-left transition-all ${action.accent}`}
                         title={action.description}
                       >
@@ -555,7 +572,7 @@ export default function DashboardPage() {
                         <span className="text-[10px] text-foreground-muted leading-tight line-clamp-1">
                           {action.description}
                         </span>
-                      </button>
+                      </Link>
                     );
                   })}
                 </div>

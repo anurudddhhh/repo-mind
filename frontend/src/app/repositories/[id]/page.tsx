@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import {
   ArrowLeft,
   Layers,
@@ -398,13 +399,14 @@ export default function RepositoryAnalysisPage({ params }: { params: { id: strin
       <header className="sticky top-0 z-40 border-b border-border bg-panel/80 backdrop-blur-md">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push('/dashboard')}
+            <Link
+              href="/dashboard"
+              prefetch={true}
               className="p-2 -ml-2 rounded-lg text-foreground-muted hover:text-foreground hover:bg-border transition-all"
               title="Back to Dashboard"
             >
               <ArrowLeft size={20} />
-            </button>
+            </Link>
             <div className="flex flex-col">
               <div className="flex items-center gap-2 font-bold text-base text-foreground">
                 <Github size={18} />
@@ -425,13 +427,14 @@ export default function RepositoryAnalysisPage({ params }: { params: { id: strin
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push(`/chat/${params.id}`)}
+            <Link
+              href={`/chat/${params.id}`}
+              prefetch={true}
               className="inline-flex h-9 items-center gap-1.5 px-3.5 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-foreground/90 transition-all shadow-sm"
             >
               <MessageSquare size={14} />
               <span>Chat Assistant</span>
-            </button>
+            </Link>
           </div>
         </div>
 
