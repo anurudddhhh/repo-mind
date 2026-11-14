@@ -157,25 +157,26 @@ A built-in development TCP proxy in `backend/env-loader.js` that bypasses local 
   ┌─────────────────────────────────────────────────────────────────────────────┐
   │                       NODE.JS + EXPRESS.JS BACKEND                          │
   │                                                                             │
-  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌───────────────┐  ┌────┐  │
-  │  │Auth Routes │  │Repo Routes │  │Chat Routes │  │Analysis Routes│  │Eval│  │
-  │  │ /api/auth/*│  │ /api/repos │  │ /api/chat/*│  │ /api/analyze/*│  │Set │  │
-  │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └──────┬────────┘  └──┬─┘  │
-  │        │               │               │                │              │    │
-  │  ┌─────▼───────────────▼───────────────▼────────────────▼──────────────▼─┐  │
-  │  │                       CORE SERVICE MODULES                            │  │
-  │  │                                                                       │  │
-  │  │  ┌───────────┐  ┌────────────┐  ┌──────────────┐  ┌────────────────┐  │  │
-  │  │  │ GitHub    │  │ web-tree-  │  │ Hybrid Search│  │ Groq Multi-LLM │  │  │
-  │  │  │ Service   │  │ sitter AST │  │ RRF Engine   │  │ Cascade Chain  │  │  │
-  │  │  │ (Octokit) │  │ Parser     │  │ (Vector+KW)  │  │ (120B/70B/20B) │  │  │
-  │  │  └─────┬─────┘  └─────┬──────┘  └──────┬───────┘  └───────┬────────┘  │  │
-  │  │        │               │               │                  │           │  │
-  │  │  ┌─────▼───────────────▼───────────────▼──────────────────▼────────┐  │  │
-  │  │  │                       MIDDLEWARE LAYER                          │  │  │
-  │  │  │       Redis Rate Limiter │ JWT Auth Guard │ Response Cache      │  │  │
-  │  │  └─────────────────────────────────────────────────────────────────┘  │  │
-  │  └─────────────────────────────────────────────────────────────────────────┘  │
+  │  ┌───────────┐  ┌─────────────┐  ┌───────────┐  ┌──────────┐  ┌───────────┐ │
+  │  │Auth Routes│  │Repo/Indexing│  │Chat/Search│  │ Analysis │  │ Eval Set  │ │
+  │  │ /api/auth │  │/repositories│  │/api/chat  │  │/api/     │  │Benchmark  │ │
+  │  │           │  │/api/indexing│  │/api/search│  │analyze   │  │ (25 Qs)   │ │
+  │  └─────┬─────┘  └──────┬──────┘  └─────┬─────┘  └─────┬────┘  └─────┬─────┘ │
+  │        │               │               │              │             │       │
+  │  ┌─────▼───────────────▼───────────────▼──────────────▼─────────────▼─────┐ │
+  │  │                       CORE SERVICE MODULES                             │ │
+  │  │                                                                        │ │
+  │  │  ┌───────────┐  ┌────────────┐  ┌──────────────┐  ┌────────────────┐   │ │
+  │  │  │ GitHub    │  │ web-tree-  │  │ Hybrid Search│  │ Groq Multi-LLM │   │ │
+  │  │  │ Service   │  │ sitter AST │  │ RRF Engine   │  │ Cascade Chain  │   │ │
+  │  │  │ (Octokit) │  │ Parser     │  │ (Vector+KW)  │  │ (120B/70B/20B) │   │ │
+  │  │  └─────┬─────┘  └─────┬──────┘  └──────┬───────┘  └───────┬────────┘   │ │
+  │  │        │               │               │                  │            │ │
+  │  │  ┌─────▼───────────────▼───────────────▼──────────────────▼────────┐   │ │
+  │  │  │                       MIDDLEWARE LAYER                          │   │ │
+  │  │  │       Redis Rate Limiter │ JWT Auth Guard │ Response Cache      │   │ │
+  │  │  └─────────────────────────────────────────────────────────────────┘   │ │
+  │  └────────────────────────────────────────────────────────────────────────┘ │
   └─────────────────────────────────────────────────────────────────────────────┘
           │               │                 │              │            │
           ▼               ▼                 ▼              ▼            ▼
@@ -251,6 +252,8 @@ indexing        2       2/2 (100%)   2/2 (100%)   2/2 (100%)
 =============================================================================
 ```
 
+> **Note**: The numbers above illustrate a benchmark evaluation run against an indexed Repo-Mind codebase using the Hybrid RRF search engine. Run `npm run eval -- <your-repository-id>` to execute the 25-question suite live and generate fresh Hit@1/3/5 numbers for your indexed repository.
+
 ---
 
 ## 🛠️ Tech Stack
@@ -258,43 +261,43 @@ indexing        2       2/2 (100%)   2/2 (100%)   2/2 (100%)
 ### Frontend
 | Technology | Version | Purpose |
 |---|---|---|
-| [Next.js](https://nextjs.org/) | 14 (App Router) | React framework with SSR, streaming, and route prefetching |
+| [Next.js](https://nextjs.org/) | 14.2.x (App Router) | React framework with SSR, streaming, and route prefetching |
 | [TypeScript](https://www.typescriptlang.org/) | 5.x | Strict typing across components, state, and API layers |
-| [Tailwind CSS](https://tailwindcss.com/) | 3.x | Utility-first styling with responsive design |
-| [Zustand](https://github.com/pmndrs/zustand) | 5.x | Lightweight global client state management |
-| [Mermaid.js](https://mermaid.js.org/) | 11.x | Dynamic, on-demand architectural diagram rendering |
-| [React Markdown](https://github.com/remarkjs/react-markdown) | 10.x | Renders LLM markdown with custom citation and code components |
-| [React Syntax Highlighter](https://github.com/react-syntax-highlighter/react-syntax-highlighter) | 16.x | Prism-based code syntax highlighting |
-| [Lucide React](https://lucide.dev/) | 1.x | Clean, scalable UI icons |
-| [Axios](https://axios-http.com/) | 1.x | HTTP client with SSE streaming support |
+| [Tailwind CSS](https://tailwindcss.com/) | 3.4.x | Utility-first styling with responsive design |
+| [Zustand](https://github.com/pmndrs/zustand) | 5.0.x | Lightweight global client state management |
+| [Mermaid.js](https://mermaid.js.org/) | 11.16.x | Dynamic, on-demand architectural diagram rendering |
+| [React Markdown](https://github.com/remarkjs/react-markdown) | 10.1.x | Renders LLM markdown with custom citation and code components |
+| [React Syntax Highlighter](https://github.com/react-syntax-highlighter/react-syntax-highlighter) | 16.1.x | Prism-based code syntax highlighting |
+| [Lucide React](https://lucide.dev/) | 1.31.x | Clean, scalable UI icons |
+| [Axios](https://axios-http.com/) | 1.19.x | HTTP client for REST requests |
 
 ### Backend
 | Technology | Version | Purpose |
 |---|---|---|
-| [Node.js](https://nodejs.org/) | ≥18 | JavaScript runtime |
+| [Node.js](https://nodejs.org/) | ≥18 | JavaScript runtime environment |
 | [Express.js](https://expressjs.com/) | 4.18.3 | REST API and SSE streaming server |
 | [TypeScript](https://www.typescriptlang.org/) | 5.x | Full type safety and ts-node execution |
-| [Prisma](https://www.prisma.io/) | 5.x / 7.x | Type-safe ORM connecting to Neon PostgreSQL |
-| [Passport.js](http://www.passportjs.org/) | 0.7.x | GitHub OAuth 2.0 authentication strategy |
-| [JSON Web Token](https://github.com/auth0/node-jsonwebtoken) | 9.x | JWT creation and verification |
-| [Winston](https://github.com/winstonjs/winston) | 3.x | Structured multi-transport logging |
+| [Prisma ORM](https://www.prisma.io/) | 5.22.x | Type-safe ORM with Neon Serverless adapter (`@prisma/adapter-neon` 7.9.x) |
+| [Passport.js](http://www.passportjs.org/) | 0.7.x | GitHub OAuth 2.0 authentication strategy (`passport-github2` 0.1.x) |
+| [JSON Web Token](https://github.com/auth0/node-jsonwebtoken) | 9.0.x | Stateless JWT creation and signature verification |
+| [Winston](https://github.com/winstonjs/winston) | 3.19.x | Structured multi-transport logging |
 | [Zod](https://zod.dev/) | 3.22.x | Runtime schema validation |
 
 ### AI, Retrieval & Machine Learning
-| Technology | Purpose |
-|---|---|
-| [Groq API](https://groq.com/) | Ultra-fast inference with Multi-LLM cascade fallback |
-| [Pinecone](https://www.pinecone.io/) | Vector database for dense semantic embeddings |
-| [Hugging Face API / Transformers](https://huggingface.co/) | `sentence-transformers/all-MiniLM-L6-v2` 384-dimensional embeddings |
-| [Reciprocal Rank Fusion (RRF)](https://en.wikipedia.org/wiki/Reciprocal_rank_fusion) | Merges semantic vector ranks with PostgreSQL keyword ranks ($k = 60$) |
-| [web-tree-sitter](https://github.com/nicolo-ribaudo/tree-sitter-wasm) | WebAssembly-based AST semantic chunking and dependency graph parsing |
+| Technology | Version | Purpose |
+|---|---|---|
+| [Groq SDK](https://groq.com/) | 1.5.x | Ultra-fast inference with automated Multi-LLM cascade fallback |
+| [Pinecone](https://www.pinecone.io/) | 8.2.x | Managed vector database for 384-dimensional dense semantic embeddings |
+| [Transformers.js](https://huggingface.co/) | 2.17.x | `@xenova/transformers` (`sentence-transformers/all-MiniLM-L6-v2`) |
+| [Reciprocal Rank Fusion (RRF)](https://en.wikipedia.org/wiki/Reciprocal_rank_fusion) | — | Algorithm merging dense vector rankings with PostgreSQL keyword rankings ($k = 60$) |
+| [web-tree-sitter](https://github.com/nicolo-ribaudo/tree-sitter-wasm) | 0.22.x | WebAssembly-based AST semantic chunking and cross-file dependency graph |
 
 ### Infrastructure & Cloud Services
-| Technology | Purpose |
-|---|---|
-| [Neon](https://neon.tech/) | Serverless PostgreSQL database |
-| [Upstash](https://upstash.com/) | Serverless Redis for distributed rate limiting & response caching |
-| [GitHub REST API](https://docs.github.com/en/rest) | Octokit integration for fetching file trees, contents, and commits |
+| Technology | Provider / Package | Purpose |
+|---|---|---|
+| [PostgreSQL](https://neon.tech/) | Neon Cloud Serverless | Primary relational database for users, repositories, and code chunks |
+| [Redis](https://upstash.com/) | Upstash (`@upstash/redis` 1.38.x) | Distributed sliding-window rate limiting (`@upstash/ratelimit` 2.0.x) & caching |
+| [GitHub REST API](https://docs.github.com/en/rest) | Octokit (`@octokit/rest` 19.0.x) | Ingests repository file trees, raw file contents, and commit history |
 
 ---
 
@@ -470,78 +473,120 @@ repo-mind/
 │   ├── prisma/
 │   │   └── schema.prisma             # PostgreSQL schema definition
 │   └── src/
-│       ├── index.ts                  # Application entry point
+│       ├── index.ts                  # Application entry point & middleware stack
 │       ├── eval/                     # Retrieval evaluation framework
-│       │   ├── eval-dataset.json     # 25 ground-truth benchmark questions
+│       │   ├── eval-dataset.json     # 25 ground-truth benchmark questions (9 categories)
 │       │   └── run-eval.ts           # Hit@1, Hit@3, Hit@5 evaluation runner
 │       ├── routes/                   # Express route definitions
-│       │   ├── auth.routes.ts        # /api/auth/*
-│       │   ├── repo.routes.ts        # /api/repos/*
-│       │   ├── chat.routes.ts        # /api/chat/*
-│       │   ├── search.routes.ts      # /api/search/*
-│       │   └── analysis.routes.ts    # /api/analyze/*
-│       ├── controllers/              # Request controllers
+│       │   ├── auth.routes.ts        # /api/auth/* (GitHub OAuth & sessions)
+│       │   ├── repository.routes.ts  # /api/repositories/* (List & delete repos)
+│       │   ├── indexing.routes.ts    # /api/indexing/* (Start indexing & status)
+│       │   ├── search.routes.ts      # /api/search/* (Hybrid RRF, file & tree search)
+│       │   ├── chat.routes.ts        # /api/chat/* (SSE streaming RAG chat)
+│       │   └── analysis.routes.ts    # /api/analyze/* (Architecture, bugs, docs, commits)
+│       ├── controllers/              # HTTP request controllers
+│       │   ├── auth.controller.ts
+│       │   ├── repository.controller.ts
+│       │   ├── indexing.controller.ts
+│       │   ├── search.controller.ts
+│       │   ├── chat.controller.ts
+│       │   └── analysis.controller.ts
 │       ├── services/                 # Core domain logic
-│       │   ├── search.service.ts     # Hybrid RRF search engine & noise filters
-│       │   ├── chat.service.ts       # RAG prompt builder & SSE streaming
-│       │   ├── indexing.service.ts   # Micro-batch repository indexing
-│       │   ├── chunking.service.ts   # AST semantic chunker & graph builder
-│       │   ├── mermaid.service.ts    # Architecture diagram synthesizer
+│       │   ├── search.service.ts     # Hybrid RRF search engine & intent noise filter
+│       │   ├── chat.service.ts       # RAG prompt builder, citation mapping & SSE stream
+│       │   ├── chunking.service.ts   # AST semantic chunker & cross-file import graph
+│       │   ├── embedding.service.ts  # Micro-batched Hugging Face vector embedding
+│       │   ├── mermaid.service.ts    # Interactive Mermaid diagram synthesizer
+│       │   ├── commit.service.ts     # Commit history and velocity analyzer
 │       │   └── analysis.service.ts   # Bug scanner & documentation generator
-│       ├── middleware/               # Auth, rate limiting & cache guards
-│       └── lib/                      # Shared clients (Groq cascade, Pinecone, Redis, Prisma)
+│       ├── middleware/               # Auth, rate limiting & error guards
+│       │   ├── auth.middleware.ts    # JWT token verification & user lookup
+│       │   └── rateLimit.middleware.ts # Upstash Redis sliding window limiter
+│       └── lib/                      # Shared singletons & infrastructure clients
+│           ├── env.ts                # Synchronous dotenv environment loader
+│           ├── github.ts             # Octokit GitHub REST API client
+│           ├── groq.ts               # Multi-LLM cascade fallback (120B ➔ 20B ➔ Safeguard)
+│           ├── huggingface.ts        # Hugging Face embedding pipeline
+│           ├── jwt.ts                # JWT token signing & verification
+│           ├── logger.ts             # Winston structured logging
+│           ├── passport.ts           # Passport.js GitHub OAuth strategy
+│           ├── pinecone.ts           # Pinecone vector database client
+│           ├── prisma.ts             # Prisma ORM client instance
+│           ├── redis.ts              # Upstash Redis client
+│           └── tree-sitter.ts        # web-tree-sitter WASM parser loader
 │
 └── frontend/                         # Next.js 14 App Router UI
     ├── package.json                  # Frontend dependencies
     ├── next.config.mjs               # Next.js configuration
     ├── tailwind.config.ts            # Tailwind styling setup
     └── src/
-        ├── app/                      # App router views
-        │   ├── layout.tsx            # Global layout & providers
+        ├── app/                      # Next.js App Router views
+        │   ├── layout.tsx            # Global root layout & providers
         │   ├── page.tsx              # Landing page
+        │   ├── auth/success/         # OAuth callback & JWT exchange handler
         │   ├── dashboard/            # Repository management & indexing UI
-        │   ├── chat/[repositoryId]/  # Live streaming chat & citation badges
-        │   └── repositories/[id]/    # Architecture, bugs, docs, commits tabs
+        │   ├── chat/[repositoryId]/  # Live SSE streaming chat with line citations
+        │   └── repositories/[id]/    # Architecture, bugs, docs & commit analytics tabs
         ├── components/               # Modular UI components
+        │   ├── DeleteModal.tsx       # Repository deletion modal
+        │   ├── ErrorBoundary.tsx     # Client error boundary
+        │   ├── SkeletonLoaders.tsx   # Loading placeholders
+        │   ├── Toast.tsx             # Notification toast alerts
+        │   └── icons/Github.tsx      # SVG GitHub brand icon
         ├── services/
-        │   └── api.ts                # Decoupled API service client
-        └── store/
-            └── useAuthStore.ts       # Zustand authentication state
+        │   └── api.ts                # Decoupled API service client & SSE handlers
+        ├── store/
+        │   └── useAuthStore.ts       # Zustand authentication & session store
+        └── types/
+            └── index.ts              # TypeScript interface definitions
 ```
 
 ---
 
 ## 📡 API Reference
 
-### Authentication
+### Authentication (`/api/auth`)
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/auth/github` | Initiates GitHub OAuth authorization flow |
-| `GET` | `/api/auth/github/callback` | OAuth redirect handler returning session JWT |
-| `GET` | `/api/auth/me` | Fetches authenticated user profile |
-| `POST` | `/api/auth/logout` | Terminates user session |
+| `GET` | `/api/auth/github` | Initiates GitHub OAuth 2.0 authorization redirect |
+| `GET` | `/api/auth/github/callback` | OAuth callback handler returning session JWT via cookie/redirect |
+| `GET` | `/api/auth/me` | Fetches authenticated user profile and token status |
+| `POST` | `/api/auth/logout` | Clears authentication session cookie |
+| `GET` | `/api/auth/failure` | Handles OAuth failure and redirect states |
 
-### Repositories & Indexing
+### Repositories (`/api/repositories`)
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/repos` | Returns all indexed repositories for the user |
-| `POST` | `/api/repos` | Initiates repository indexing with progress events |
-| `DELETE` | `/api/repos/:id` | Deletes a repository, its chunks, and vector embeddings |
-| `GET` | `/api/repos/:id/status` | Queries indexing status |
+| `GET` | `/api/repositories` | Returns all indexed repositories for the authenticated user |
+| `DELETE` | `/api/repositories/:id` | Deletes a repository, its chunks, and Pinecone vector embeddings |
 
-### Search & Chat
+### Indexing (`/api/indexing`)
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/chat/:repoId/stream?message=` | Real-time SSE chat stream with inline citations |
-| `GET` | `/api/search/:repoId?q=&limit=` | Hybrid search (RRF vector + keyword) |
+| `POST` | `/api/indexing/start` | Initiates repo clone, AST chunking, embedding & vector indexing (SSE progress stream) |
+| `GET` | `/api/indexing/status/:repositoryId` | Queries indexing status and current completion percentage |
 
-### Codebase Analysis
+### Search & Code Retrieval (`/api/search`)
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/analyze/:repoId/architecture` | Generates system architecture overview & diagram |
-| `POST` | `/api/analyze/:repoId/bugs` | Analyzes codebase for security vulnerabilities & bugs |
-| `POST` | `/api/analyze/:repoId/docs` | Generates comprehensive codebase documentation |
-| `GET` | `/api/analyze/:repoId/commits` | Summarizes recent commit activity and patterns |
+| `POST` | `/api/search/:repositoryId` | Hybrid search (RRF vector + keyword) with JSON body `{ query, limit }` |
+| `GET` | `/api/search/:repositoryId?q=&limit=` | Hybrid search (RRF vector + keyword) via query parameters |
+| `GET` | `/api/search/:repositoryId/files?q=` | Fast structured file and symbol lookup |
+| `GET` | `/api/search/:repositoryId/tree` | Returns complete repository directory tree and AST symbol hierarchy |
+
+### Chat (`/api/chat`)
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/chat/:repositoryId` | Real-time SSE streaming chat with inline citations and Mermaid generation (JSON body `{ message }`) |
+| `GET` | `/api/chat/:repositoryId/stream?message=` | Real-time SSE streaming chat endpoint via query parameters |
+
+### Codebase Analysis (`/api/analyze`)
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/analyze/:repoId/architecture` | Generates system architecture overview & interactive Mermaid diagram |
+| `POST` | `/api/analyze/:repoId/bugs` | Scans codebase for security vulnerabilities, bugs, and antipatterns |
+| `POST` | `/api/analyze/:repoId/docs` | Generates comprehensive codebase documentation and module summaries |
+| `GET` | `/api/analyze/:repoId/commits` | Summarizes recent commit history, velocity, and contributor activity |
 
 ---
 
