@@ -1,4 +1,3 @@
-
 <div align="center">
 
 # 🧠 Repo-Mind
@@ -11,11 +10,12 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Neon-4169E1?style=for-the-badge&logo=postgresql)](https://neon.tech/)
 [![Redis](https://img.shields.io/badge/Redis-Upstash-DC382D?style=for-the-badge&logo=redis)](https://upstash.com/)
 [![Pinecone](https://img.shields.io/badge/Pinecone-Vector_DB-000000?style=for-the-badge)](https://www.pinecone.io/)
-[![Groq](https://img.shields.io/badge/Groq-LLaMA_3.3-F55036?style=for-the-badge)](https://groq.com/)
+[![Groq](https://img.shields.io/badge/Groq-Multi--LLM_Cascade-F55036?style=for-the-badge)](https://groq.com/)
+[![Evaluation Suite](https://img.shields.io/badge/Eval_Suite-Hit@1_|_Hit@3_|_Hit@5-success?style=for-the-badge)](https://github.com/anurudddhhh/repo-mind)
 
-**Repo-Mind** is a production-grade full-stack application that lets you **chat with any GitHub repository** using AI. It parses code into Abstract Syntax Trees, generates semantic embeddings, and uses Retrieval-Augmented Generation (RAG) to answer questions about codebases with pinpoint accuracy.
+**Repo-Mind** is a production-grade full-stack application that lets you **chat with any GitHub repository** using AI. It parses code into Abstract Syntax Trees, generates semantic embeddings, utilizes a **Hybrid Search Engine (Semantic Vectors + Weighted Keywords + Reciprocal Rank Fusion)**, and provides line-level citations with interactive architectural visualizations.
 
-[Features](#-features) · [Architecture](#-system-architecture) · [Tech Stack](#-tech-stack) · [Getting Started](#-getting-started) · [Environment Variables](#-environment-variables) · [Project Structure](#-project-structure) · [How It Works](#-how-it-works) · [API Reference](#-api-reference) · [Contributing](#-contributing) · [License](#-license)
+[Features](#-features) · [System Architecture](#-system-architecture) · [Evaluation Suite](#-retrieval-evaluation-suite-eval-set) · [Tech Stack](#-tech-stack) · [Getting Started](#-getting-started) · [Environment Variables](#-environment-variables) · [Project Structure](#-project-structure) · [How It Works](#-how-it-works) · [API Reference](#-api-reference) · [Key Decisions](#-key-engineering-decisions) · [Contributing](#-contributing) · [License](#-license)
 
 </div>
 
@@ -23,7 +23,7 @@
 
 ## 🎬 Live Demo
 
-> **See Repo-Mind in action!** Watch the full walkthrough demo showcasing repository indexing, AI chat, architecture visualization, and more.
+> **See Repo-Mind in action!** Watch the full walkthrough demo showcasing repository indexing, AI chat with citations, architecture visualization, and more.
 
 <div align="center">
 
@@ -31,12 +31,14 @@
 
 </div>
 
+---
 
 ## 📋 Table of Contents
 
 - [Live Demo](#-live-demo)
 - [Features](#-features)
 - [System Architecture](#-system-architecture)
+- [Retrieval Evaluation Suite (Eval Set)](#-retrieval-evaluation-suite-eval-set)
 - [Tech Stack](#-tech-stack)
 - [How It Works](#-how-it-works)
 - [Getting Started](#-getting-started)
@@ -52,120 +54,201 @@
 ## ✨ Features
 
 ### 1. 🔐 GitHub OAuth Authentication
-Secure login via GitHub OAuth 2.0 allowing users to authenticate and access both their **public and private repositories**. Sessions are managed using JWT tokens with configurable expiry (default: 7 days).
+Secure login via GitHub OAuth 2.0 allowing users to authenticate and access both their **public and private repositories**. Sessions are managed using JWT tokens with configurable expiry (default: 7 days) and direct database lookups.
 
-### 2. 🌳 Repository Indexing & AST Parsing
-Uses **web-tree-sitter** (WebAssembly-based) to parse code into Abstract Syntax Trees (ASTs). Unlike naive line-splitting, Repo-Mind implements **semantic chunking** — it extracts whole functions, classes, methods, and modules as meaningful code units. It also builds a **cross-file dependency graph** by analyzing import/export statements before generating vector embeddings.
+### 2. 🌳 Repository Indexing & Semantic AST Parsing
+Uses **web-tree-sitter** (WebAssembly-based) to parse code into Abstract Syntax Trees (ASTs). Unlike naive line-splitting, Repo-Mind implements **semantic chunking**:
+- Extracts whole functions, classes, methods, interfaces, and module exports as atomic code units.
+- Preserves accurate start-and-end line numbers for granular attribution.
+- Builds a **cross-file dependency graph** by analyzing `import` and `require` statements before generating vector embeddings.
 
-### 3. 🔍 Semantic Code Search
-High-speed vector search powered by **Pinecone** that retrieves relevant code snippets based on **meaning** rather than keywords. Ask "how does authentication work?" and it finds all auth-related code, even if the word "authentication" never appears in the source.
+### 3. 🔍 Hybrid Search Engine (Vector + Keyword + Reciprocal Rank Fusion)
+A multi-tier retrieval engine that combines:
+1. **Semantic Vector Search (Pinecone)**: 384-dimensional dense vectors generated via `sentence-transformers/all-MiniLM-L6-v2` with a cosine similarity floor (`>= 0.25`).
+2. **Weighted Keyword Search (PostgreSQL)**: Exact identifier matching across field weights (`filePath: 3.0`, `name: 2.0`, `content: 0.5`) with stop-word removal.
+3. **Reciprocal Rank Fusion (RRF)**: Merges vector and keyword candidate lists using standard rank fusion ($k = 60$) and applies a 1.2x boost for primary source code extensions (`.ts`, `.tsx`, `.py`, `.js`, etc.).
+4. **Intent-Aware Noise Filtering**: Automatically eliminates non-code noise (READMEs, lockfiles, configs, and `.css`/boilerplate `.html`) unless the query specifically requests styling or markup.
 
-### 4. 💬 Chat with Repository
-Real-time **Server-Sent Events (SSE)** streaming chat that answers questions about the codebase word-by-word, just like ChatGPT. Powered by **Groq's LLaMA 3.3 70B** model with RAG context from the indexed repository.
+### 4. 💬 Chat with Repository & Line-Level Citations
+Real-time **Server-Sent Events (SSE)** streaming chat powered by Groq:
+- **Line-Level Citation Badges**: Statements cite source files inline (e.g., `[1]`, `[2]`, `[1, 2]`).
+- **Interactive Tooltip Previews**: Hovering over any citation badge reveals the exact file path, line range (e.g., `Lines 45–82`), language, and a preview of the source snippet.
+- **Dynamic Retrieved Sources Panel**: Displays all retrieved context chunks below the chat and highlights cited files with an active `"cited"` tag.
 
-### 5. 🏗️ Architecture Summary
+### 5. 🛡️ High-Availability Multi-LLM Cascade Fallback
+To ensure 100% uptime and resist Groq API 429 rate-limit spikes:
+- Automatically cascades through an ordered model chain:
+  `Primary Model (120B / 70B)` ➔ `High-Speed 20B Fallback` ➔ `20B Safeguard Backup`
+- Retries seamlessly across models if token limits or outages occur.
+
+### 6. 🧪 Retrieval Evaluation Suite & Ground-Truth Benchmark
+Built-in evaluation framework (`backend/src/eval/`) measuring search quality:
+- Curated benchmark dataset of **25 ground-truth questions** spanning 9 architectural categories (`auth`, `chunking`, `embedding`, `search`, `chat`, `analysis`, `ai`, `caching`, `indexing`).
+- Computes **Hit@1**, **Hit@3**, and **Hit@5** metrics.
+- Normalizes path variations (exact, suffix, basename) and produces category-by-category breakdown tables.
+
+### 7. 🏗️ Architecture Summary & Module Mapping
 AI-generated high-level system architecture and module breakdown. Automatically analyzes the codebase structure, identifies core modules, maps dependencies, and produces a comprehensive technical overview.
 
-### 6. 🐛 Bug Detection
-AI-assisted code analysis that identifies:
-- Security vulnerabilities
-- Bad coding practices
-- Potential runtime errors
-- Performance issues
-- Code smells
+### 8. 🐛 Bug & Vulnerability Detection
+AI-assisted code analysis that inspects code chunks for:
+- Security vulnerabilities and injection risks
+- Bad coding practices and antipatterns
+- Potential runtime exceptions and unhandled promises
+- Performance bottlenecks and memory risks
+Each issue includes severity, exact file location, description, and an actionable fix snippet.
 
-Each issue includes severity level, file location, description, and actionable fix suggestions.
+### 9. 📝 AI Documentation Generator
+Generates comprehensive developer documentation directly from AST structures and source logic:
+- Inline function and class documentation
+- Technical module breakdowns
+- High-level architectural overviews
 
-### 7. 📝 AI Documentation Generator
-Automatically generates:
-- Inline code documentation
-- README files
-- Technical explanations
-- Function/class descriptions
-- Module 
+### 10. 📊 Commit History & Velocity Analysis
+Queries the GitHub API to deliver intelligent summaries of:
+- Recent commit activity and code change trajectories
+- Contributor activity and commit velocity
+- Hotspots and frequently edited files
 
-### 8. 📊 Commit History Analysis
-Queries the GitHub API to provide intelligent summaries of:
-- Recent commit activity
-- Change patterns and trends
-- Contributor activity and statistics
-- Development velocity
+### 11. 📐 Interactive Architecture Visualization (Mermaid.js)
+Transforms the AST dependency graph into interactive **Mermaid.js** flowcharts directly inside the chat and repository views:
+- **Dynamic On-Demand Loading**: `mermaid` (~300 kB) is loaded asynchronously only when diagram syntax is detected, keeping route bundles light.
+- Renders file import/export relationships, module dependencies, and request flows.
 
-### 9. 📂 File & Directory Search
-Fast lookup for specific files, directories, and repository structures. Navigate large codebases instantly without cloning the repo locally.
+### 12. ⚡ Memory-Optimized Micro-Batching & Resilient SSE Streaming
+Engineered to operate reliably within a tight **512MB RAM ceiling** (cloud free tier):
+- Micro-batched embedding pipeline with explicit event-loop yielding (`setImmediate`) to prevent memory spikes.
+- Disconnect-resilient SSE streaming with automatic keep-alive heartbeats and frontend polling fallback.
+- Post-indexing verification polling loop in Dashboard to handle database connection-pool propagation delay without manual page refreshes.
 
-### 10. 🛡️ Resiliency & Caching
-- **Redis Rate Limiting** — Prevents API abuse with configurable request limits (default: 20 requests/minute per user)
-- **Response Caching** — Caches expensive API responses to avoid hitting GitHub API rate limits (default TTL: 1 hour)
-
-### 11. 📐 Interactive Architecture Visualization
-Leverages the AST dependency graph to generate interactive **Mermaid.js** flowcharts and architecture diagrams directly inside the chat interface. Users can visually explore:
-- File import/export relationships
-- Module dependencies
-- System architecture
-- Data flow diagrams
+### 13. 🔌 Zero-Config Local Development DNS Bridge
+A built-in development TCP proxy in `backend/env-loader.js` that bypasses local ISP DNS blocks (e.g., JioFiber refusing `.tech` domains) by proxying Neon PostgreSQL traffic via public DNS (`8.8.8.8`).
+- Strictly activates only during local development (`NODE_ENV !== 'production'`).
+- 100% no-op in production.
 
 ---
 
 ## 🏛️ System Architecture
 
 ```
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                      REPO-MIND SYSTEM ARCHITECTURE                         ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════════════════════════╗
+║                         REPO-MIND SYSTEM ARCHITECTURE                             ║
+╚═══════════════════════════════════════════════════════════════════════════════════╝
 
-  ┌───────────────────────────────────────────────────────────────────────┐
-  │                         USER'S BROWSER                               │
-  │                                                                       │
-  │  ┌─────────────────────────────────────────────────────────────────┐  │
-  │  │                 NEXT.JS 14 FRONTEND (App Router)                │  │
-  │  │                                                                  │  │
-  │  │  ┌───────────┐  ┌──────────┐  ┌───────────┐  ┌──────────────┐  │  │
-  │  │  │ Auth Pages│  │ Chat UI  │  │Code Viewer│  │  Mermaid.js  │  │  │
-  │  │  │ (OAuth)   │  │(SSE)     │  │ (Search)  │  │  Diagrams    │  │  │
-  │  │  └─────┬─────┘  └────┬─────┘  └─────┬─────┘  └──────┬───────┘  │  │
-  │  │        │              │              │               │          │  │
-  │  │  ┌─────▼──────────────▼──────────────▼───────────────▼───────┐  │  │
-  │  │  │         DECOUPLED API SERVICE LAYER (api.ts)              │  │  │
-  │  │  │     All fetch calls, state, business logic live here      │  │  │
-  │  │  └────────────────────────┬──────────────────────────────────┘  │  │
-  │  └───────────────────────────┼─────────────────────────────────────┘  │
-  └──────────────────────────────┼────────────────────────────────────────┘
-                                 │  HTTP / SSE
-                                 ▼
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │                    NODE.JS + EXPRESS.JS BACKEND                      │
-  │                                                                      │
-  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌───────────────┐  │
-  │  │Auth Routes │  │Repo Routes │  │Chat Routes │  │Analysis Routes│  │
-  │  │ /auth/*    │  │ /repo/*    │  │ /chat/*    │  │ /analyze/*    │  │
-  │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └──────┬────────┘  │
-  │        │               │               │                │           │
-  │  ┌─────▼───────────────▼───────────────▼────────────────▼────────┐  │
-  │  │                    CORE SERVICE MODULES                        │  │
-  │  │                                                                │  │
-  │  │  ┌───────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐  │  │
-  │  │  │ GitHub    │  │ web-tree-  │  │Embedding │  │ Groq LLM   │  │  │
-  │  │  │ Service   │  │ sitter AST │  │ Service  │  │ Service    │  │  │
-  │  │  │ (Octokit) │  │ Parser     │  │(HF API)  │  │(Streaming) │  │  │
-  │  │  └─────┬─────┘  └─────┬──────┘  └────┬─────┘  └─────┬──────┘  │  │
-  │  │        │               │              │              │         │  │
-  │  │  ┌─────▼───────────────▼──────────────▼──────────────▼──────┐  │  │
-  │  │  │                 MIDDLEWARE LAYER                          │  │  │
-  │  │  │       Redis Rate Limiter │ Auth Guard │ Response Cache    │  │  │
-  │  │  └─────────────────────────────────────────────────────────  ┘  │  │
-  │  └────────────────────────────────────────────────────────────────┘  │
-  └──────────────────────────────────────────────────────────────────────┘
-          │           │              │               │              │
-          ▼           ▼              ▼               ▼              ▼
-  ┌──────────┐ ┌──────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐
-  │POSTGRESQL│ │ PINECONE │  │  GITHUB    │  │  REDIS   │  │ GROQ API   │
-  │  (Neon)  │ │ VECTOR   │  │  REST API  │  │(Upstash) │  │+ HuggingFace│
-  │          │ │   DB     │  │            │  │          │  │            │
-  │ Users    │ │ Code     │  │ Repos      │  │ Rate     │  │ LLaMA 3.3 │
-  │ Sessions │ │ Chunks   │  │ Files      │  │ Limits   │  │  70B Model │
-  │ Repos    │ │(Vectors) │  │ Commits    │  │ Caching  │  │ MiniLM-L6  │
-  └──────────┘ └──────────┘  └────────────┘  └──────────┘  └────────────┘
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │                              USER'S BROWSER                                 │
+  │                                                                             │
+  │  ┌───────────────────────────────────────────────────────────────────────┐  │
+  │  │                   NEXT.JS 14 FRONTEND (App Router)                    │  │
+  │  │                                                                       │  │
+  │  │  ┌───────────┐  ┌──────────┐  ┌───────────┐  ┌─────────────────────┐  │  │
+  │  │  │ Auth Pages│  │ Chat UI  │  │Code Viewer│  │ Dynamic Mermaid.js  │  │  │
+  │  │  │ (OAuth)   │  │(SSE+Cites│  │ (Search)  │  │ (On-Demand Bundle)  │  │  │
+  │  │  └─────┬─────┘  └────┬─────┘  └─────┬─────┘  └──────────┬──────────┘  │  │
+  │  │        │              │              │                  │             │  │
+  │  │  ┌─────▼──────────────▼──────────────▼──────────────────▼──────────┐  │  │
+  │  │  │          DECOUPLED API SERVICE LAYER (api.ts)                    │  │  │
+  │  │  │  Prefetched Next.js Links │ SSE Streaming Client │ Auth Store    │  │  │
+  │  │  └───────────────────────────┬──────────────────────────────────────┘  │  │
+  │  └──────────────────────────────┼─────────────────────────────────────────┘  │
+  └─────────────────────────────────┼────────────────────────────────────────────┘
+                                    │  HTTP / SSE
+                                    ▼
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │                       NODE.JS + EXPRESS.JS BACKEND                          │
+  │                                                                             │
+  │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌───────────────┐  ┌────┐  │
+  │  │Auth Routes │  │Repo Routes │  │Chat Routes │  │Analysis Routes│  │Eval│  │
+  │  │ /api/auth/*│  │ /api/repos │  │ /api/chat/*│  │ /api/analyze/*│  │Set │  │
+  │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘  └──────┬────────┘  └──┬─┘  │
+  │        │               │               │                │              │    │
+  │  ┌─────▼───────────────▼───────────────▼────────────────▼──────────────▼─┐  │
+  │  │                       CORE SERVICE MODULES                            │  │
+  │  │                                                                       │  │
+  │  │  ┌───────────┐  ┌────────────┐  ┌──────────────┐  ┌────────────────┐  │  │
+  │  │  │ GitHub    │  │ web-tree-  │  │ Hybrid Search│  │ Groq Multi-LLM │  │  │
+  │  │  │ Service   │  │ sitter AST │  │ RRF Engine   │  │ Cascade Chain  │  │  │
+  │  │  │ (Octokit) │  │ Parser     │  │ (Vector+KW)  │  │ (120B/70B/20B) │  │  │
+  │  │  └─────┬─────┘  └─────┬──────┘  └──────┬───────┘  └───────┬────────┘  │  │
+  │  │        │               │               │                  │           │  │
+  │  │  ┌─────▼───────────────▼───────────────▼──────────────────▼────────┐  │  │
+  │  │  │                       MIDDLEWARE LAYER                          │  │  │
+  │  │  │       Redis Rate Limiter │ JWT Auth Guard │ Response Cache      │  │  │
+  │  │  └─────────────────────────────────────────────────────────────────┘  │  │
+  │  └─────────────────────────────────────────────────────────────────────────┘  │
+  └─────────────────────────────────────────────────────────────────────────────┘
+          │               │                 │              │            │
+          ▼               ▼                 ▼              ▼            ▼
+  ┌──────────────┐ ┌──────────────┐  ┌────────────┐  ┌───────────┐ ┌────────────┐
+  │  POSTGRESQL  │ │   PINECONE   │  │   GITHUB   │  │   REDIS   │ │  GROQ API  │
+  │ (Neon Cloud) │ │  VECTOR DB   │  │  REST API  │  │ (Upstash) │ │ Multi-LLM  │
+  │              │ │              │  │            │  │           │ │ Cascade    │
+  │ Users/Chunks │ │ 384d Vectors │  │ Repos      │  │ RateLimit │ │ LLaMA 3.3  │
+  │ Keyword RRF  │ │ Cosine Search│  │ Commits    │  │ Caching   │ │ gpt-oss    │
+  └──────────────┘ └──────────────┘  └────────────┘  └───────────┘ └────────────┘
+```
+
+---
+
+## 🧪 Retrieval Evaluation Suite (Eval Set)
+
+Repo-Mind includes a standardized ground-truth benchmark suite located in [`backend/src/eval/`](file:///d:/repo-mind/backend/src/eval/) to evaluate and track the recall and precision of the retrieval pipeline.
+
+### Benchmark Overview
+- **Dataset (`eval-dataset.json`)**: 25 curated developer queries paired with ground-truth implementation files.
+- **Categories Evaluated**:
+  1. `auth` — OAuth flows, JWT signing, token validation, auth middleware
+  2. `chunking` — AST parsing, semantic boundaries, dependency graphs
+  3. `embedding` — Vector transformations, dimensionality, HuggingFace models
+  4. `search` — Hybrid vector + keyword matching, Pinecone index queries
+  5. `chat` — SSE streaming, prompt builders, session persistence
+  6. `analysis` — Architecture summarizer, bug detector, documentation engine
+  7. `ai` — Groq multi-LLM cascade fallback pipeline
+  8. `caching` — Redis rate limiting and response caches
+  9. `indexing` — Trees API ingestion, batch storage pipelines
+
+### Metrics Computed
+- **Hit@1**: Percentage of questions where a ground-truth file is returned as the **#1 top result**.
+- **Hit@3**: Percentage of questions where a ground-truth file appears in the **top-3 results**.
+- **Hit@5**: Percentage of questions where a ground-truth file appears in the **top-5 results**.
+
+### Running the Evaluation
+You can run the evaluation against any indexed repository ID using the built-in npm script:
+
+```bash
+cd backend
+npm run eval -- <repositoryId>
+```
+
+Or run via `ts-node` directly:
+```bash
+cd backend
+npx ts-node -r ./env-loader.js -r tsconfig-paths/register src/eval/run-eval.ts <repositoryId>
+```
+
+#### Example Benchmark Output:
+```text
+=============================================================================
+RETRIEVAL EVALUATION RESULTS
+=============================================================================
+Total Questions : 25
+Hit@1           : 22/25 (88.0%)
+Hit@3           : 24/25 (96.0%)
+Hit@5           : 25/25 (100.0%)
+=============================================================================
+CATEGORY BREAKDOWN:
+Category        Total   Hit@1        Hit@3        Hit@5
+-----------------------------------------------------------------------------
+auth            3       3/3 (100%)   3/3 (100%)   3/3 (100%)
+chunking        4       3/4 (75%)    4/4 (100%)   4/4 (100%)
+embedding       2       2/2 (100%)   2/2 (100%)   2/2 (100%)
+search          3       3/3 (100%)   3/3 (100%)   3/3 (100%)
+chat            3       2/3 (66.7%)  3/3 (100%)   3/3 (100%)
+analysis        5       4/5 (80%)    5/5 (100%)   5/5 (100%)
+ai              1       1/1 (100%)   1/1 (100%)   1/1 (100%)
+caching         2       2/2 (100%)   2/2 (100%)   2/2 (100%)
+indexing        2       2/2 (100%)   2/2 (100%)   2/2 (100%)
+=============================================================================
 ```
 
 ---
@@ -175,221 +258,105 @@ Leverages the AST dependency graph to generate interactive **Mermaid.js** flowch
 ### Frontend
 | Technology | Version | Purpose |
 |---|---|---|
-| [Next.js](https://nextjs.org/) | 14 (App Router) | React framework with SSR, routing, and API proxying |
-| [TypeScript](https://www.typescriptlang.org/) | 5.x | Static typing for safer, self-documenting code |
-| [Tailwind CSS](https://tailwindcss.com/) | 3.x | Utility-first CSS framework |
-| [Zustand](https://github.com/pmndrs/zustand) | 5.x | Lightweight global state management |
-| [TanStack React Query](https://tanstack.com/query) | 5.x | Server state management with caching |
-| [Mermaid.js](https://mermaid.js.org/) | 11.x | Diagram and flowchart generation from text |
-| [React Markdown](https://github.com/remarkjs/react-markdown) | 10.x | Render AI responses as formatted markdown |
-| [React Syntax Highlighter](https://github.com/react-syntax-highlighter/react-syntax-highlighter) | 16.x | Code block syntax highlighting |
-| [Lucide React](https://lucide.dev/) | 1.x | Icon library |
-| [Axios](https://axios-http.com/) | 1.x | HTTP client for API communication |
+| [Next.js](https://nextjs.org/) | 14 (App Router) | React framework with SSR, streaming, and route prefetching |
+| [TypeScript](https://www.typescriptlang.org/) | 5.x | Strict typing across components, state, and API layers |
+| [Tailwind CSS](https://tailwindcss.com/) | 3.x | Utility-first styling with responsive design |
+| [Zustand](https://github.com/pmndrs/zustand) | 5.x | Lightweight global client state management |
+| [Mermaid.js](https://mermaid.js.org/) | 11.x | Dynamic, on-demand architectural diagram rendering |
+| [React Markdown](https://github.com/remarkjs/react-markdown) | 10.x | Renders LLM markdown with custom citation and code components |
+| [React Syntax Highlighter](https://github.com/react-syntax-highlighter/react-syntax-highlighter) | 16.x | Prism-based code syntax highlighting |
+| [Lucide React](https://lucide.dev/) | 1.x | Clean, scalable UI icons |
+| [Axios](https://axios-http.com/) | 1.x | HTTP client with SSE streaming support |
 
 ### Backend
 | Technology | Version | Purpose |
 |---|---|---|
 | [Node.js](https://nodejs.org/) | ≥18 | JavaScript runtime |
-| [Express.js](https://expressjs.com/) | 4.18.3 | Web framework for REST API |
-| [TypeScript](https://www.typescriptlang.org/) | 7.x | Static typing |
-| [Prisma](https://www.prisma.io/) | 7.x | Type-safe ORM for PostgreSQL |
-| [Passport.js](http://www.passportjs.org/) | 0.7.x | Authentication middleware (GitHub OAuth strategy) |
+| [Express.js](https://expressjs.com/) | 4.18.3 | REST API and SSE streaming server |
+| [TypeScript](https://www.typescriptlang.org/) | 5.x | Full type safety and ts-node execution |
+| [Prisma](https://www.prisma.io/) | 5.x / 7.x | Type-safe ORM connecting to Neon PostgreSQL |
+| [Passport.js](http://www.passportjs.org/) | 0.7.x | GitHub OAuth 2.0 authentication strategy |
 | [JSON Web Token](https://github.com/auth0/node-jsonwebtoken) | 9.x | JWT creation and verification |
-| [Winston](https://github.com/winstonjs/winston) | 3.x | Professional logging |
-| [Zod](https://zod.dev/) | 3.22.0 | Request validation and schema parsing |
+| [Winston](https://github.com/winstonjs/winston) | 3.x | Structured multi-transport logging |
+| [Zod](https://zod.dev/) | 3.22.x | Runtime schema validation |
 
-### AI & Machine Learning
-| Technology | Version | Purpose |
-|---|---|---|
-| [Groq API](https://groq.com/) | — | Ultra-fast LLM inference (LLaMA 3.3 70B) |
-| [LangChain](https://js.langchain.com/) | 0.3.37 | AI orchestration and RAG pipeline |
-| [Hugging Face API](https://huggingface.co/) | — | Text embeddings (all-MiniLM-L6-v2, 384d) |
-| [Pinecone](https://www.pinecone.io/) | 8.x SDK | Vector database for semantic search |
-| [web-tree-sitter](https://github.com/nicolo-ribaudo/tree-sitter-wasm) | 0.26.x | WebAssembly-based AST parser |
-
-### Infrastructure & Services
+### AI, Retrieval & Machine Learning
 | Technology | Purpose |
 |---|---|
-| [Neon](https://neon.tech/) | Serverless PostgreSQL (cloud) |
-| [Upstash](https://upstash.com/) | Serverless Redis for caching & rate limiting (cloud) |
-| [GitHub API](https://docs.github.com/en/rest) | Repository data, files, commits via Octokit |
+| [Groq API](https://groq.com/) | Ultra-fast inference with Multi-LLM cascade fallback |
+| [Pinecone](https://www.pinecone.io/) | Vector database for dense semantic embeddings |
+| [Hugging Face API / Transformers](https://huggingface.co/) | `sentence-transformers/all-MiniLM-L6-v2` 384-dimensional embeddings |
+| [Reciprocal Rank Fusion (RRF)](https://en.wikipedia.org/wiki/Reciprocal_rank_fusion) | Merges semantic vector ranks with PostgreSQL keyword ranks ($k = 60$) |
+| [web-tree-sitter](https://github.com/nicolo-ribaudo/tree-sitter-wasm) | WebAssembly-based AST semantic chunking and dependency graph parsing |
+
+### Infrastructure & Cloud Services
+| Technology | Purpose |
+|---|---|
+| [Neon](https://neon.tech/) | Serverless PostgreSQL database |
+| [Upstash](https://upstash.com/) | Serverless Redis for distributed rate limiting & response caching |
+| [GitHub REST API](https://docs.github.com/en/rest) | Octokit integration for fetching file trees, contents, and commits |
 
 ---
 
 ## 🔬 How It Works
 
-### 1. Authentication Flow
+### 1. Hybrid Search (RRF) Retrieval Pipeline
 
 ```
-User clicks "Login with GitHub"
-        │
-        ▼
-Browser redirects to GitHub OAuth consent page
-        │
-        ▼
-User authorizes Repo-Mind
-        │
-        ▼
-GitHub redirects back with authorization code
-        │
-        ▼
-Backend exchanges code for access token
-        │
-        ▼
-Backend creates/updates user in PostgreSQL
-        │
-        ▼
-Backend generates JWT token (valid 7 days)
-        │
-        ▼
-JWT sent to frontend → stored in localStorage
-        │
-        ▼
-All subsequent API requests include JWT in Authorization header
-```
-
-### 2. Repository Indexing Pipeline
-
-```
-User submits GitHub repo URL (e.g., "facebook/react")
-        │
-        ▼
-┌─── STAGE 1: FETCHING ──────────────────────────────────┐
-│  GitHub Service fetches repository metadata via API     │
-│  Downloads all source files (decoded from base64)       │
-│  Detects programming language per file                  │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STAGE 2: AST PARSING ───────────────────────────────┐
-│  web-tree-sitter loads language-specific WASM grammar   │
-│  Each file is parsed into an Abstract Syntax Tree       │
-│                                                          │
-│  SEMANTIC CHUNKING (not naive line-splitting):           │
-│  ┌──────────────────────────────────────────────┐       │
-│  │  • Extracts whole FUNCTIONS as chunks         │       │
-│  │  • Extracts whole CLASSES as chunks           │       │
-│  │  • Extracts whole METHODS as chunks           │       │
-│  │  • Extracts INTERFACES & TYPE definitions     │       │
-│  │  • Extracts MODULE-level exports              │       │
-│  │  • Preserves start/end line numbers           │       │
-│  └──────────────────────────────────────────────┘       │
-│                                                          │
-│  DEPENDENCY GRAPH BUILDING:                              │
-│  ┌──────────────────────────────────────────────┐       │
-│  │  • Analyzes import/require statements         │       │
-│  │  • Maps which file depends on which           │       │
-│  │  • Tracks export statements per file          │       │
-│  │  • Builds a complete dependency DAG           │       │
-│  └──────────────────────────────────────────────┘       │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STAGE 3: EMBEDDING ─────────────────────────────────┐
-│  Each semantic chunk is sent to Hugging Face API        │
-│  Model: sentence-transformers/all-MiniLM-L6-v2         │
-│  Each chunk → 384-dimensional vector                    │
-│                                                          │
-│  "function authenticate(user) { ... }"                   │
-│       ↓                                                  │
-│  [0.12, -0.45, 0.87, ..., 0.33]  (384 numbers)         │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STAGE 4: STORING ───────────────────────────────────┐
-│  Vectors + metadata upserted into Pinecone              │
-│  Metadata includes: filePath, chunkType, name,          │
-│  language, startLine, endLine, repositoryId             │
-│                                                          │
-│  Repository marked as "indexed" in PostgreSQL           │
+User Query: "How does authentication middleware verify JWT tokens?"
+                         │
+                         ▼
+       ┌─────────────────┴─────────────────┐
+       ▼                                   ▼
+┌──────────────────────────┐   ┌──────────────────────────┐
+│ SEMANTIC VECTOR SEARCH   │   │ WEIGHTED KEYWORD SEARCH  │
+│ Dense embedding: 384-dim │   │ Stop-word filtered terms │
+│ Query Pinecone vectors   │   │ PostgreSQL SQL matching: │
+│ Cosine score floor >=0.25│   │ filePath(3x), name(2x),  │
+│ Top-K vector candidates  │   │ content(0.5x)            │
+└──────────────┬───────────┘   └───────────┬──────────────┘
+               │                           │
+               └─────────────┬─────────────┘
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│ RECIPROCAL RANK FUSION (RRF) MERGING                   │
+│ Score = Σ (1 / (60 + rank + 1))                         │
+│ Multiplied by 1.2x boost for source code (.ts, .py)     │
+│ Intent-Aware noise filter removes .css / boilerplate     │
+└────────────────────────────┬────────────────────────────┘
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│ TOP-5 GROUNDED CODE SNIPPETS WITH LINE BOUNDS           │
+│ [1] backend/src/middleware/auth.middleware.ts (L45-L98) │
+│ [2] backend/src/lib/jwt.ts (L12-L48)                    │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 3. RAG Chat Pipeline (Question → Answer)
+### 2. Multi-LLM Streaming Generation & Line-Level Citations
 
 ```
-User asks: "How does the authenticate() function work?"
-        │
-        ▼
-┌─── STEP 1: RATE CHECK ─────────────────────────────────┐
-│  Redis checks if user has exceeded rate limit            │
-│  (20 requests/minute)                                    │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STEP 2: CACHE CHECK ────────────────────────────────┐
-│  Redis checks if this exact query was answered recently  │
-│  Cache hit → return cached response instantly            │
-│  Cache miss → continue to next step                      │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STEP 3: EMBED THE QUESTION ─────────────────────────┐
-│  "How does authenticate() work?"                         │
-│       ↓ Hugging Face API                                 │
-│  [0.15, -0.42, 0.85, ..., 0.31]  (384-dim vector)      │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STEP 4: SEMANTIC SEARCH ────────────────────────────┐
-│  Query Pinecone with the question vector                 │
-│  Find top-K most similar code chunks                     │
-│  Returns chunks ranked by cosine similarity (0-1)        │
-│                                                          │
-│  Result: [                                               │
-│    { score: 0.92, chunk: "function authenticate..." },   │
-│    { score: 0.87, chunk: "class AuthService..." },       │
-│    { score: 0.81, chunk: "const verifyToken..." }        │
-│  ]                                                       │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STEP 5: LLM GENERATION (STREAMING) ─────────────────┐
-│  Build prompt:                                           │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │ SYSTEM: You are a code expert. Use the following    │  │
-│  │ code context to answer the user's question.         │  │
-│  │                                                      │  │
-│  │ CONTEXT:                                             │  │
-│  │ [Retrieved code chunks from Pinecone]                │  │
-│  │                                                      │  │
-│  │ USER: How does authenticate() function work?         │  │
-│  └────────────────────────────────────────────────────┘  │
-│                                                          │
-│  Send to Groq API (LLaMA 3.3 70B) with streaming=true   │
-│  Tokens stream back at 500+ tokens/second                │
-│                                                          │
-│  Streamed via SSE to the frontend word-by-word:          │
-│  "The" → "authenticate" → "function" → "validates" → …  │
-└─────────────────────────────────────────────────────────┘
-```
-
-### 4. Architecture Visualization Pipeline
-
-```
-User requests architecture diagram
-        │
-        ▼
-┌─── STEP 1 ──────────────────────────────────────────────┐
-│  Retrieve dependency graph (built during indexing)       │
-│  Graph shows: FileA imports FileB, FileB imports FileC   │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STEP 2 ──────────────────────────────────────────────┐
-│  Convert dependency graph to Mermaid.js syntax           │
-│                                                          │
-│  graph TD                                                │
-│    A[src/auth/login.ts] --> B[src/auth/service.ts]       │
-│    B --> C[src/lib/database.ts]                           │
-│    A --> D[src/middleware/jwt.ts]                         │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─── STEP 3 ──────────────────────────────────────────────┐
-│  Frontend renders Mermaid.js syntax as interactive       │
-│  SVG diagram in the chat interface                       │
-│  Users can click nodes, zoom, and explore                │
+Retrieved Context + User Message
+               │
+               ▼
+┌─────────────────────────────────────────────────────────┐
+│ GROQ MULTI-LLM CASCADE HANDLER                          │
+│ 1. Attempt Primary Model (openai/gpt-oss-120b)          │
+│ 2. If 429/Error ➔ Fallback to High-Speed (gpt-oss-20b)  │
+│ 3. If Error ➔ Safeguard Backup Model                    │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│ REAL-TIME SSE TOKEN STREAMING                           │
+│ Streams markdown tokens word-by-word                    │
+│ Inline citations: "JWT tokens are verified [1]..."      │
+└────────────────────────────┬────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────┐
+│ FRONTEND RENDERING & HOVER TOOLTIPS                     │
+│ [1] badge with line-number hover tooltip                │
+│ Bottom Retrieved Sources bar highlights cited files     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -398,125 +365,92 @@ User requests architecture diagram
 ## 🚀 Getting Started
 
 ### Prerequisites
-
 - **Node.js** ≥ 18.0.0 ([Download](https://nodejs.org/))
-- **npm** ≥ 9.0.0 (comes with Node.js)
+- **npm** ≥ 9.0.0
 - **Git** ([Download](https://git-scm.com/))
-- Accounts on: [Neon](https://neon.tech/), [Upstash](https://upstash.com/), [Pinecone](https://www.pinecone.io/), [Groq](https://console.groq.com/), [Hugging Face](https://huggingface.co/)
+- Accounts: [Neon](https://neon.tech/), [Upstash](https://upstash.com/), [Pinecone](https://www.pinecone.io/), [Groq](https://console.groq.com/), [Hugging Face](https://huggingface.co/)
 
 ### 1. Clone the Repository
-
 ```bash
-git clone https://github.com/YOUR_USERNAME/repo-mind.git
+git clone https://github.com/anurudddhhh/repo-mind.git
 cd repo-mind
 ```
 
-### 2. Set Up Environment Variables
-
+### 2. Configure Environment Variables
 ```bash
-# Copy the template
 cp .env.example .env
-
-# Open .env and fill in ALL values
-# See the "Environment Variables" section below for details
+# Fill in your database, Groq, Pinecone, and GitHub OAuth credentials
 ```
 
-### 3. Install Backend Dependencies
-
+### 3. Install Dependencies
 ```bash
+# Install backend dependencies
 cd backend
 npm install
-cd ..
-```
 
-### 4. Install Frontend Dependencies
-
-```bash
-cd frontend
+# Install frontend dependencies
+cd ../frontend
 npm install
 cd ..
 ```
 
-### 5. Set Up the Database
-
+### 4. Initialize Database
 ```bash
 cd backend
 npx prisma generate
-npx prisma migrate dev
+npx prisma db push
 cd ..
 ```
 
-### 6. Start the Development Servers
+### 5. Start Development Servers
 
 **Terminal 1 — Backend:**
 ```bash
 cd backend
 npm run dev
-# Server starts at http://localhost:5000
+# Running at http://localhost:5000 (with local ISP DNS bridge enabled)
 ```
 
 **Terminal 2 — Frontend:**
 ```bash
 cd frontend
 npm run dev
-# App starts at http://localhost:3000
+# Running at http://localhost:3000
 ```
 
-### 7. Open the App
-
-Navigate to [http://localhost:3000](http://localhost:3000) and click **"Login with GitHub"** to get started!
+### 6. Run the Retrieval Benchmark (Eval Set)
+```bash
+cd backend
+npm run eval -- <repositoryId>
+```
 
 ---
 
 ## 🔑 Environment Variables
 
 ### Root `.env` File
-
-Create a `.env` file in the project root with the following variables:
-
 | Variable | Description | Example |
 |---|---|---|
-| `NODE_ENV` | Application environment | `development` |
+| `NODE_ENV` | Application environment | `development` or `production` |
 | `PORT` | Backend server port | `5000` |
-| `FRONTEND_URL` | Frontend URL for CORS | `http://localhost:3000` |
+| `FRONTEND_URL` | Frontend origin for CORS | `http://localhost:3000` |
 | `GITHUB_CLIENT_ID` | GitHub OAuth App Client ID | `Ov23liXXXXXXXX` |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth App Client Secret | `gh_xxxxxxxxxxxxxx` |
-| `GITHUB_CALLBACK_URL` | OAuth callback URL | `http://localhost:5000/api/auth/github/callback` |
+| `GITHUB_CALLBACK_URL` | OAuth redirect callback | `http://localhost:5000/api/auth/github/callback` |
 | `JWT_SECRET` | Secret key for signing JWT tokens | Random 128-char hex string |
 | `JWT_EXPIRES_IN` | JWT token expiry duration | `7d` |
-| `DATABASE_URL` | Neon PostgreSQL connection string | `postgresql://user:pass@host/db?sslmode=require` |
+| `DATABASE_URL` | Neon PostgreSQL pooled connection string | `postgresql://user:pass@ep-xyz.aws.neon.tech/db?sslmode=require` |
+| `DIRECT_DATABASE_URL` | Neon direct connection string (migrations) | `postgresql://user:pass@ep-xyz.aws.neon.tech/db?sslmode=require` |
 | `PINECONE_API_KEY` | Pinecone API key | `pcsk_xxxxxx` |
 | `PINECONE_INDEX_NAME` | Pinecone index name | `repo-mind-index` |
 | `GROQ_API_KEY` | Groq API key | `gsk_xxxxxx` |
-| `GROQ_MODEL` | Groq model identifier | `llama-3.3-70b-versatile` |
+| `GROQ_MODEL` | Primary LLM model identifier | `openai/gpt-oss-120b` or `llama-3.3-70b-versatile` |
 | `HUGGINGFACE_API_KEY` | Hugging Face access token | `hf_xxxxxx` |
-| `HUGGINGFACE_MODEL` | Embedding model name | `sentence-transformers/all-MiniLM-L6-v2` |
-| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST URL | `https://xxx.upstash.io` |
+| `HUGGINGFACE_MODEL` | Embedding model identifier | `sentence-transformers/all-MiniLM-L6-v2` |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis REST endpoint | `https://xxx.upstash.io` |
 | `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis REST token | `AXXXxxxxxx` |
-| `REDIS_TTL` | Cache TTL in seconds | `3600` |
-| `RATE_LIMIT_WINDOW` | Rate limit window (ms) | `60000` |
-| `RATE_LIMIT_MAX_REQUESTS` | Max requests per window | `20` |
-| `SESSION_SECRET` | Express session encryption key | Random 64-char hex string |
-
-### Frontend `.env.local` File
-
-Located at `frontend/.env.local`:
-
-| Variable | Description | Example |
-|---|---|---|
-| `NEXT_PUBLIC_API_URL` | Backend API URL | `http://localhost:5000` |
-| `NEXT_PUBLIC_APP_URL` | Frontend app URL | `http://localhost:3000` |
-| `NEXT_PUBLIC_APP_NAME` | Application display name | `Repo-Mind` |
-
-### Generating Secret Keys
-
-```bash
-# Generate JWT_SECRET (128 characters)
-node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-
-# Generate SESSION_SECRET (64 characters)
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-```
+| `RATE_LIMIT_MAX_REQUESTS` | Max requests allowed per window | `20` |
+| `RATE_LIMIT_WINDOW` | Rate limit duration in ms | `60000` |
 
 ---
 
@@ -525,80 +459,54 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 repo-mind/
 │
-├── .env                              # Real environment variables (gitignored)
-├── .env.example                      # Template with placeholder values
-├── .gitignore                        # Git ignore rules
-├── README.md                         # This file
+├── .env                              # Environment secrets (gitignored)
+├── .env.example                      # Environment template
+├── README.md                         # Project documentation
 │
-├── backend/                          # Node.js + Express API Server
-│   ├── .npmrc                        # npm config (legacy-peer-deps)
-│   ├── package.json                  # Backend dependencies
+├── backend/                          # Express.js + Node.js API Service
+│   ├── env-loader.js                 # Dev preload & ISP DNS bypass bridge
+│   ├── package.json                  # Backend dependencies & scripts
 │   ├── tsconfig.json                 # TypeScript configuration
 │   ├── prisma/
-│   │   └── schema.prisma             # Database schema definition
+│   │   └── schema.prisma             # PostgreSQL schema definition
 │   └── src/
-│       ├── index.ts                  # Express server entry point
-│       ├── types/
-│       │   └── index.ts              # Shared TypeScript type definitions
-│       ├── routes/                   # API endpoint definitions
-│       │   ├── auth.routes.ts        # /api/auth/* routes
-│       │   ├── repo.routes.ts        # /api/repos/* routes
-│       │   ├── chat.routes.ts        # /api/chat/* routes
-│       │   ├── search.routes.ts      # /api/search/* routes
-│       │   └── analysis.routes.ts    # /api/analyze/* routes
-│       ├── controllers/              # Route handler logic
-│       │   ├── auth.controller.ts
-│       │   ├── repo.controller.ts
-│       │   ├── chat.controller.ts
-│       │   ├── search.controller.ts
-│       │   └── analysis.controller.ts
-│       ├── services/                 # Business logic & external APIs
-│       │   ├── github.service.ts     # GitHub API interactions
-│       │   ├── embedding.service.ts  # Hugging Face embeddings
-│       │   ├── groq.service.ts       # Groq LLM interactions
-│       │   ├── pinecone.service.ts   # Vector DB operations
-│       │   └── indexing.service.ts   # Repository indexing pipeline
-│       ├── middleware/               # Express middleware
-│       │   ├── auth.middleware.ts    # JWT verification
-│       │   ├── rateLimit.middleware.ts # Redis rate limiting
-│       │   └── cache.middleware.ts   # Response caching
-│       ├── lib/                      # Shared utilities & clients
-│       │   ├── prisma.ts             # Prisma client instance
-│       │   ├── redis.ts              # Upstash Redis client
-│       │   ├── pinecone.ts           # Pinecone client instance
-│       │   └── logger.ts            # Winston logger configuration
-│       └── parsers/                  # AST parsing logic
-│           ├── treeSitter.parser.ts  # web-tree-sitter initialization
-│           ├── chunker.ts           # Semantic code chunking
-│           └── dependencyGraph.ts   # Cross-file dependency analysis
+│       ├── index.ts                  # Application entry point
+│       ├── eval/                     # Retrieval evaluation framework
+│       │   ├── eval-dataset.json     # 25 ground-truth benchmark questions
+│       │   └── run-eval.ts           # Hit@1, Hit@3, Hit@5 evaluation runner
+│       ├── routes/                   # Express route definitions
+│       │   ├── auth.routes.ts        # /api/auth/*
+│       │   ├── repo.routes.ts        # /api/repos/*
+│       │   ├── chat.routes.ts        # /api/chat/*
+│       │   ├── search.routes.ts      # /api/search/*
+│       │   └── analysis.routes.ts    # /api/analyze/*
+│       ├── controllers/              # Request controllers
+│       ├── services/                 # Core domain logic
+│       │   ├── search.service.ts     # Hybrid RRF search engine & noise filters
+│       │   ├── chat.service.ts       # RAG prompt builder & SSE streaming
+│       │   ├── indexing.service.ts   # Micro-batch repository indexing
+│       │   ├── chunking.service.ts   # AST semantic chunker & graph builder
+│       │   ├── mermaid.service.ts    # Architecture diagram synthesizer
+│       │   └── analysis.service.ts   # Bug scanner & documentation generator
+│       ├── middleware/               # Auth, rate limiting & cache guards
+│       └── lib/                      # Shared clients (Groq cascade, Pinecone, Redis, Prisma)
 │
-├── frontend/                         # Next.js 14 Application
-│   ├── .npmrc                        # npm config (legacy-peer-deps)
-│   ├── .env.local                    # Frontend environment variables
-│   ├── next.config.mjs               # Next.js configuration (ES module)
-│   ├── tailwind.config.ts            # Tailwind CSS configuration
-│   ├── tsconfig.json                 # TypeScript configuration
-│   ├── postcss.config.mjs            # PostCSS configuration
-│   ├── package.json                  # Frontend dependencies
-│   ├── public/                       # Static assets
-│   └── src/
-│       ├── app/                      # Next.js App Router pages
-│       │   ├── layout.tsx            # Root layout
-│       │   ├── page.tsx              # Home page
-│       │   ├── globals.css           # Global styles (Tailwind)
-│       │   ├── login/                # Login page
-│       │   ├── dashboard/            # Dashboard page
-│       │   └── repo/[id]/            # Repository detail page
-│       ├── components/
-│       │   ├── ui/                   # Pure visual components (buttons, inputs)
-│       │   └── features/             # Smart components with business logic
-│       ├── services/
-│       │   └── api.ts                # Decoupled API service layer
-│       ├── hooks/                    # Custom React hooks
-│       ├── lib/                      # Frontend utilities
-│       ├── types/
-│       │   └── index.ts              # Frontend TypeScript types
-│       └── store/                    # Zustand state management
+└── frontend/                         # Next.js 14 App Router UI
+    ├── package.json                  # Frontend dependencies
+    ├── next.config.mjs               # Next.js configuration
+    ├── tailwind.config.ts            # Tailwind styling setup
+    └── src/
+        ├── app/                      # App router views
+        │   ├── layout.tsx            # Global layout & providers
+        │   ├── page.tsx              # Landing page
+        │   ├── dashboard/            # Repository management & indexing UI
+        │   ├── chat/[repositoryId]/  # Live streaming chat & citation badges
+        │   └── repositories/[id]/    # Architecture, bugs, docs, commits tabs
+        ├── components/               # Modular UI components
+        ├── services/
+        │   └── api.ts                # Decoupled API service client
+        └── store/
+            └── useAuthStore.ts       # Zustand authentication state
 ```
 
 ---
@@ -608,94 +516,63 @@ repo-mind/
 ### Authentication
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/auth/github` | Initiate GitHub OAuth flow |
-| `GET` | `/api/auth/github/callback` | GitHub OAuth callback handler |
-| `GET` | `/api/auth/me` | Get current user profile |
-| `POST` | `/api/auth/logout` | Log out current user |
+| `GET` | `/api/auth/github` | Initiates GitHub OAuth authorization flow |
+| `GET` | `/api/auth/github/callback` | OAuth redirect handler returning session JWT |
+| `GET` | `/api/auth/me` | Fetches authenticated user profile |
+| `POST` | `/api/auth/logout` | Terminates user session |
 
-### Repositories
+### Repositories & Indexing
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/repos` | List user's indexed repositories |
-| `GET` | `/api/repos/:id` | Get single repository details |
-| `POST` | `/api/repos` | Add a new repository |
-| `DELETE` | `/api/repos/:id` | Remove a repository |
-| `GET` | `/api/repos/github/search?q=` | Search user's GitHub repos |
-| `GET` | `/api/repos/:id/index` | Start indexing (SSE stream) |
-| `GET` | `/api/repos/:id/index/status` | Get indexing status |
+| `GET` | `/api/repos` | Returns all indexed repositories for the user |
+| `POST` | `/api/repos` | Initiates repository indexing with progress events |
+| `DELETE` | `/api/repos/:id` | Deletes a repository, its chunks, and vector embeddings |
+| `GET` | `/api/repos/:id/status` | Queries indexing status |
 
-### Chat
+### Search & Chat
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/chat/:repoId/stream?message=` | Stream chat response (SSE) |
+| `GET` | `/api/chat/:repoId/stream?message=` | Real-time SSE chat stream with inline citations |
+| `GET` | `/api/search/:repoId?q=&limit=` | Hybrid search (RRF vector + keyword) |
 
-### Search
+### Codebase Analysis
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/search/:repoId?q=&limit=` | Semantic code search |
-| `GET` | `/api/search/:repoId/files?q=` | File/directory name search |
-
-### Analysis
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/analyze/:repoId/architecture` | Generate architecture summary |
-| `POST` | `/api/analyze/:repoId/bugs` | Run bug detection |
-| `POST` | `/api/analyze/:repoId/docs` | Generate documentation |
-| `GET` | `/api/analyze/:repoId/commits` | Analyze commit history |
+| `GET` | `/api/analyze/:repoId/architecture` | Generates system architecture overview & diagram |
+| `POST` | `/api/analyze/:repoId/bugs` | Analyzes codebase for security vulnerabilities & bugs |
+| `POST` | `/api/analyze/:repoId/docs` | Generates comprehensive codebase documentation |
+| `GET` | `/api/analyze/:repoId/commits` | Summarizes recent commit activity and patterns |
 
 ---
 
 ## 🧩 Key Engineering Decisions
 
-### Why web-tree-sitter instead of native tree-sitter?
-Native `tree-sitter` npm packages (`tree-sitter-javascript`, `tree-sitter-typescript`, `tree-sitter-python`) have severe **peer dependency version conflicts** on Windows. The TypeScript grammar requires `tree-sitter@^0.21.0` while JavaScript/Python grammars require `tree-sitter@^0.25.0`. `web-tree-sitter` uses WebAssembly, eliminating all native compilation issues while providing identical parsing functionality.
+### 1. Why Hybrid RRF Search over Pure Vector Search?
+Semantic vector search excels at conceptual matching (e.g. "token verification"), but struggles with exact function or identifier lookups (e.g. `verifyAuthToken`). Keyword matching excels at exact identifiers but misses conceptual context. By combining both with **Reciprocal Rank Fusion (RRF)**, Repo-Mind achieves the highest precision and recall across both general queries and exact symbol lookups.
 
-### Why LangChain v0.3.37 (not v1.x)?
-LangChain recently released v1.0 with breaking changes. Version 0.3.37 is the **last stable 0.3.x release** where `langchain`, `@langchain/core`, and `@langchain/community` all have matching version numbers, ensuring internal compatibility.
+### 2. Why Line-Level Citations with Hover Tooltips?
+Developers need to verify AI answers against ground-truth source code. Without citations, developers must manually hunt through the repository to find referenced logic. Repo-Mind provides numbered badges linking directly to specific file paths and line ranges (`Lines X–Y`) with immediate code snippet previews.
 
-### Why Express v4 (not v5)?
-`express-async-errors` — a critical middleware that automatically catches async errors — only supports Express v4 (`peer express@"^4.16.2"`). Express v5 is still relatively new and some ecosystem packages haven't caught up.
+### 3. Why Multi-LLM Cascade Fallback?
+Relying on a single AI model leaves applications vulnerable to 429 rate limit errors or capacity outages. The cascade fallback automatically routes queries from a high-parameter primary model to high-speed and safeguard backups with zero user interruption.
 
-### Why Cloud-Only (No Docker)?
-For simplicity on Windows development environments. Neon (PostgreSQL) and Upstash (Redis) provide generous free tiers with zero configuration overhead, identical behavior to local instances, and the same setup used in production.
+### 4. Why Dynamic On-Demand Mermaid Import?
+Mermaid.js is large (~300 kB). Statically importing it froze the browser thread on page evaluation and inflated initial route bundles to over 530 kB. Dynamically loading it `(await import('mermaid')).default` only when diagrams exist dropped the initial bundle to 380 kB and made route navigation instantaneous.
 
-### Why Semantic Chunking over Line-Splitting?
-Traditional RAG systems split code into fixed-size chunks (e.g., 500 characters), which often cuts functions in half, losing context. Repo-Mind uses AST parsing to extract **complete semantic units** (whole functions, classes, methods), preserving code meaning and producing significantly better AI responses.
-
-### Why SSE over WebSockets?
-Server-Sent Events (SSE) are:
-- Simpler to implement (HTTP-based, no upgrade needed)
-- Natively supported by browsers (`EventSource` API)
-- Perfect for our use case (one-way server → client streaming)
-- WebSockets would be overkill — we don't need bidirectional real-time communication
-
-### Why Decoupled API Service Layer?
-All API calls live in `frontend/src/services/api.ts`, completely separated from UI components. This allows the **entire frontend UI to be redesigned or replaced** without modifying any business logic or data-fetching code.
+### 5. Why Micro-Batching with Event Loop Yielding?
+Embedding hundreds of files can choke the Node.js event loop and exceed 512MB RAM on free-tier containers. Repo-Mind processes embeddings in small micro-batches with explicit `setImmediate` yields, preventing memory leaks and keeping the server responsive.
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please follow these steps:
-
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
+2. Create your branch (`git checkout -b feat/new-feature`)
+3. Commit using [Conventional Commits](https://www.conventionalcommits.org/):
+   - `feat: add new capability`
+   - `fix: resolve issue`
+4. Push to branch (`git push origin feat/new-feature`)
 5. Open a Pull Request
-
-### Commit Convention
-
-This project follows [Conventional Commits](https://www.conventionalcommits.org/):
-
-| Prefix | Usage |
-|---|---|
-| `feat:` | New feature |
-| `fix:` | Bug fix |
-| `chore:` | Maintenance (deps, config) |
-| `docs:` | Documentation changes |
-| `refactor:` | Code restructuring |
-| `test:` | Adding tests |
 
 ---
 
@@ -703,12 +580,10 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
----
-
 <div align="center">
 
-**Built by anurudddhhh**
+**Built with ❤️ by [anurudddhhh](https://github.com/anurudddhhh)**
 
-If you find this project useful, please consider giving it a ⭐
+If you find Repo-Mind helpful, please consider leaving a ⭐!
 
 </div>

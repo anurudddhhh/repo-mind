@@ -8,6 +8,7 @@
                     "build":  "tsc \u0026\u0026 tsc-alias",
                     "start":  "node dist/index.js",
                     "type-check":  "tsc --noEmit",
+                    "eval":  "ts-node -r ./env-loader.js -r tsconfig-paths/register src/eval/run-eval.ts",
                     "postinstall":  "npx prisma generate",
                     "prisma:generate":  "dotenv -e ../.env -- prisma generate",
                     "prisma:migrate":  "dotenv -e ../.env -- prisma migrate dev",
