@@ -44,7 +44,8 @@ if (process.env.NODE_ENV !== 'production' && process.env.DATABASE_URL && process
       });
     };
     resolveHost();
-    setInterval(resolveHost, 60000); // refresh every minute
+    const refreshInterval = setInterval(resolveHost, 60000); // refresh every minute
+    if (refreshInterval.unref) refreshInterval.unref();
 
     const PROXY_PORT = 5433;
 
